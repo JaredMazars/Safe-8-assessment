@@ -181,15 +181,17 @@ const WelcomeScreen = ({
                 )}
                 
                 <div style={{ textAlign: 'right', marginBottom: '1rem' }}>
-                  <button
-                    type="button"
-                    onClick={() => navigate('/forgot-password')}
-                    className="btn-text-link"
-                  >
-                    <i className="fas fa-key" style={{ marginRight: '0.375rem' }}></i>
-                    Forgot your password?
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate('/forgot-password')}
+                  className="btn-text-link"
+                  style={{ color: 'white' }}
+                >
+                  <i className="fas fa-key" style={{ marginRight: '0.375rem' }}></i>
+                  Forgot your password?
+                </button>
+              </div>
+
                 
                 <button
                   type="submit"
