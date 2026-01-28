@@ -1,4 +1,5 @@
 import express from 'express';
+import sql from 'mssql';
 import Admin from '../models/Admin.js';
 import Assessment from '../models/Assessment.js';
 import Lead from '../models/Lead.js';
@@ -8,6 +9,20 @@ import { validateAdminLogin, validatePasswordChange, validateId, validatePaginat
 import { doubleCsrfProtection } from '../middleware/csrf.js';
 import emailService from '../services/emailService.js';
 import crypto from 'crypto';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const dbConfig = {
+  server: process.env.DB_SERVER,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  options: {
+    encrypt: true,
+    trustServerCertificate: process.env.NODE_ENV !== 'production'
+  }
+};
 
 const router = express.Router();
 
@@ -223,6 +238,10 @@ router.get('/users', authenticateAdmin, async (req, res) => {
       const escapedIndustry = industry.replace(/'/g, "''");
       whereConditions.push(`industry = '${escapedIndustry}'`);
     }
+
+    // Exclude soft-deleted users (email starts with 'deleted_' or contact_name is 'DELETED USER')
+    whereConditions.push(`l.email NOT LIKE 'deleted_%'`);
+    whereConditions.push(`l.contact_name != 'DELETED USER'`);
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
@@ -602,6 +621,57 @@ router.delete('/questions/:questionId', authenticateAdmin, async (req, res) => {
   }
 });
 
+// Toggle question active status (activate/deactivate)
+router.patch('/questions/:questionId/toggle-status', authenticateAdmin, async (req, res) => {
+  try {
+    const { questionId } = req.params;
+
+    // Get current status
+    const getStatusSql = `SELECT is_active, question_text FROM assessment_questions WHERE id = ?`;
+    const result = await database.query(getStatusSql, [questionId]);
+    
+    if (!result.recordset || result.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question not found'
+      });
+    }
+
+    const currentStatus = result.recordset[0].is_active;
+    const questionText = result.recordset[0].question_text;
+    const newStatus = currentStatus ? 0 : 1;
+    const action = newStatus ? 'activated' : 'deactivated';
+
+    // Toggle status
+    const updateSql = `UPDATE assessment_questions SET is_active = ?, updated_by = ? WHERE id = ?`;
+    await database.query(updateSql, [newStatus, req.admin.id, questionId]);
+
+    await Admin.logActivity(
+      req.admin.id,
+      'UPDATE',
+      'question',
+      questionId,
+      `Question ${action}: ${questionText.substring(0, 50)}...`,
+      req.ip,
+      req.headers['user-agent']
+    );
+
+    console.log(`✅ Question ${action}:`, questionId);
+
+    res.json({
+      success: true,
+      message: `Question ${action} successfully`,
+      is_active: newStatus
+    });
+  } catch (error) {
+    console.error('❌ Error toggling question status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error toggling question status'
+    });
+  }
+});
+
 // ======================
 // ASSESSMENT TYPE MANAGEMENT
 // ======================
@@ -921,11 +991,21 @@ router.get('/activity-logs/detailed', authenticateAdmin, async (req, res) => {
 // Get all admins
 router.get('/admins', authenticateAdmin, requireSuperAdmin, async (req, res) => {
   try {
-    const admins = await Admin.getAll();
+    console.log('📥 GET /api/admin/admins - Fetching all admins');
+    
+    const pool = await sql.connect(dbConfig);
+    const result = await pool.request().query(`
+      SELECT id, username, email, full_name, role, is_active, created_at, updated_at
+      FROM admin_users
+      WHERE deleted_at IS NULL
+      ORDER BY created_at DESC
+    `);
+
+    console.log('✅ Found', result.recordset.length, 'admins (excluding deleted)');
 
     res.json({
       success: true,
-      admins
+      admins: result.recordset
     });
   } catch (error) {
     console.error('❌ Error getting admins:', error);
@@ -937,36 +1017,209 @@ router.get('/admins', authenticateAdmin, requireSuperAdmin, async (req, res) => 
 });
 
 // Create new admin
-router.post('/admins', doubleCsrfProtection, authenticateAdmin, requireSuperAdmin, async (req, res) => {
+router.post('/admins', authenticateAdmin, requireSuperAdmin, async (req, res) => {
   try {
+    console.log('📥 POST /api/admin/admins - Request body:', req.body);
+    
     const { username, email, password, full_name, role } = req.body;
 
-    if (!username || !email || !password) {
+    console.log('📥 Create admin request:', { username, email, full_name, role, hasPassword: !!password });
+
+    if (!username || !email) {
+      console.log('❌ Validation failed: username or email missing');
       return res.status(400).json({
         success: false,
-        message: 'Username, email, and password are required'
+        message: 'Username and email are required'
       });
     }
 
-    const result = await Admin.create({
-      username,
-      email,
-      password,
-      full_name,
-      role: role || 'admin',
-      created_by: req.admin.id
-    });
+    // Check if username or email already exists (including deleted)
+    const pool = await sql.connect(dbConfig);
+    const existingCheck = await pool.request()
+      .input('username', sql.NVarChar, username)
+      .input('email', sql.NVarChar, email)
+      .query(`
+        SELECT id, username, email, deleted_at FROM admin_users 
+        WHERE username = @username OR email = @email
+      `);
 
-    if (result.success) {
-      await Admin.logActivity(req.admin.id, 'CREATE', 'admin', result.adminId, `Created admin: ${username}`, req.ip, req.headers['user-agent']);
+    if (existingCheck.recordset.length > 0) {
+      const existing = existingCheck.recordset[0];
+      
+      // If the admin was previously deleted, restore it
+      if (existing.deleted_at) {
+        console.log('🔄 Restoring previously deleted admin:', existing.username);
+        
+        // Generate new temporary password
+        const bcrypt = (await import('bcrypt')).default;
+        const crypto = (await import('crypto')).default;
+        const tempPassword = password || crypto.randomBytes(8).toString('hex');
+        const hashedPassword = await bcrypt.hash(tempPassword, 10);
+        
+        // Restore in admin_users
+        await pool.request()
+          .input('id', sql.Int, existing.id)
+          .input('password_hash', sql.NVarChar, hashedPassword)
+          .input('full_name', sql.NVarChar, full_name || null)
+          .input('role', sql.NVarChar, role || 'admin')
+          .query(`
+            UPDATE admin_users 
+            SET deleted_at = NULL, is_active = 1, password_hash = @password_hash, 
+                full_name = @full_name, role = @role, must_change_password = 1, updated_at = GETDATE()
+            WHERE id = @id
+          `);
+        
+        // Restore in admins table
+        await pool.request()
+          .input('username', sql.NVarChar, existing.username)
+          .input('password_hash', sql.NVarChar, hashedPassword)
+          .input('full_name', sql.NVarChar, full_name || null)
+          .input('role', sql.NVarChar, role || 'admin')
+          .query(`
+            UPDATE admins 
+            SET deleted_at = NULL, is_active = 1, password_hash = @password_hash,
+                full_name = @full_name, role = @role, must_change_password = 1, updated_at = GETDATE()
+            WHERE username = @username
+          `);
+        
+        // Send email with new credentials
+        try {
+          await emailService.sendEmail({
+            to: existing.email,
+            subject: 'Admin Account Restored - SAFE-8',
+            html: `
+              <h2>Your Admin Account Has Been Restored</h2>
+              <p>Your admin account for SAFE-8 has been restored.</p>
+              <p><strong>Username:</strong> ${existing.username}</p>
+              <p><strong>Temporary Password:</strong> ${tempPassword}</p>
+              <p>Please login and change your password immediately.</p>
+            `
+          });
+          console.log('✅ Restoration email sent to:', existing.email);
+        } catch (emailError) {
+          console.error('❌ Failed to send restoration email:', emailError);
+        }
+        
+        return res.json({
+          success: true,
+          message: 'Admin account restored successfully',
+          admin: {
+            id: existing.id,
+            username: existing.username,
+            email: existing.email,
+            full_name: full_name || null,
+            role: role || 'admin',
+            is_active: true
+          },
+          tempPassword: tempPassword
+        });
+      }
+      
+      // If not deleted, it's a duplicate
+      if (existing.username === username) {
+        return res.status(400).json({
+          success: false,
+          message: 'Username already exists'
+        });
+      }
+      if (existing.email === email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already exists'
+        });
+      }
     }
 
-    res.json(result);
+    // Generate temporary password if not provided
+    const bcrypt = (await import('bcrypt')).default;
+    const crypto = (await import('crypto')).default;
+    const tempPassword = password || crypto.randomBytes(8).toString('hex');
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+    console.log('🔑 Generated temp password for new admin');
+
+    // Insert into admin_users table (for login)
+    const insertResult = await pool.request()
+      .input('username', sql.NVarChar, username)
+      .input('email', sql.NVarChar, email)
+      .input('password_hash', sql.NVarChar, hashedPassword)
+      .input('full_name', sql.NVarChar, full_name || null)
+      .input('role', sql.NVarChar, role || 'admin')
+      .query(`
+        INSERT INTO admin_users (username, email, password_hash, full_name, role, is_active, must_change_password, created_at, updated_at)
+        VALUES (@username, @email, @password_hash, @full_name, @role, 1, 1, GETDATE(), GETDATE());
+        SELECT SCOPE_IDENTITY() as id;
+      `);
+
+    const adminId = insertResult.recordset[0].id;
+    console.log('✅ Inserted into admin_users, ID:', adminId);
+
+    // Also insert into admins table (for super admin management)
+    await pool.request()
+      .input('username', sql.NVarChar, username)
+      .input('email', sql.NVarChar, email)
+      .input('password_hash', sql.NVarChar, hashedPassword)
+      .input('full_name', sql.NVarChar, full_name || null)
+      .input('role', sql.NVarChar, role || 'admin')
+      .query(`
+        INSERT INTO admins (username, email, password_hash, full_name, role, is_active, created_at, updated_at)
+        VALUES (@username, @email, @password_hash, @full_name, @role, 1, GETDATE(), GETDATE());
+      `);
+
+    console.log('✅ Inserted into admins table');
+
+    // Send email with credentials
+    console.log('📧 Attempting to send email to:', email);
+    try {
+      const emailResult = await emailService.sendEmail({
+        to: email,
+        subject: 'Your Admin Account Has Been Created',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #00539F;">Admin Account Created</h2>
+            <p>Hello ${full_name || username},</p>
+            <p>Your admin account has been created. You can now log in to the admin dashboard.</p>
+            
+            <div style="background-color: #f8f9fa; padding: 20px; border-left: 4px solid #00539F; margin: 20px 0;">
+              <h3 style="margin-top: 0; color: #00539F;">Login Credentials</h3>
+              <p><strong>Username:</strong> ${username}</p>
+              <p><strong>Email:</strong> ${email}</p>
+              <p><strong>Temporary Password:</strong> <code style="background: #fff; padding: 4px 8px; border: 1px solid #ddd;">${tempPassword}</code></p>
+            </div>
+            
+            <div style="background-color: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 20px 0;">
+              <p style="margin: 0;"><strong>⚠️ Security Notice:</strong> You will be required to change this password on your first login.</p>
+            </div>
+            
+            <p>If you have any questions, please contact the super administrator.</p>
+          </div>
+        `
+      });
+      console.log('✅ Email sent successfully to:', email);
+      console.log('📧 Email result:', emailResult);
+    } catch (emailError) {
+      console.error('❌ Failed to send admin credentials email:', emailError);
+      console.error('❌ Email error details:', emailError.message);
+      console.error('❌ Email stack:', emailError.stack);
+      // Don't fail the admin creation if email fails
+    }
+
+    // Log activity
+    await Admin.logActivity(req.admin.id, 'CREATE', 'admin', adminId, `Created admin: ${username}`, req.ip, req.headers['user-agent']);
+
+    console.log('✅ Admin created successfully:', username);
+
+    res.json({
+      success: true,
+      message: 'Admin created successfully',
+      adminId,
+      tempPassword: !password ? tempPassword : undefined // Only return temp password if it was auto-generated
+    });
   } catch (error) {
     console.error('❌ Error creating admin:', error);
     res.status(500).json({
       success: false,
-      message: 'Error creating admin'
+      message: error.message || 'Error creating admin'
     });
   }
 });
@@ -994,6 +1247,256 @@ router.post('/admins/:adminId/deactivate', doubleCsrfProtection, authenticateAdm
     });
   }
 });
+
+// Update admin
+router.put('/admins/:adminId', authenticateAdmin, requireSuperAdmin, async (req, res) => {
+  try {
+    const { adminId } = req.params;
+    const { username, email, password, full_name, role } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const pool = await sql.connect(dbConfig);
+    
+    // Get current admin data from admin_users
+    const currentAdmin = await pool.request()
+      .input('adminId', sql.Int, adminId)
+      .query('SELECT * FROM admin_users WHERE id = @adminId');
+
+    if (currentAdmin.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
+      });
+    }
+
+    // Build update query dynamically
+    let updateFields = [];
+    let request = pool.request().input('adminId', sql.Int, adminId);
+
+    if (email) {
+      updateFields.push('email = @email');
+      request.input('email', sql.NVarChar, email);
+    }
+
+    if (full_name !== undefined) {
+      updateFields.push('full_name = @full_name');
+      request.input('full_name', sql.NVarChar, full_name || null);
+    }
+
+    if (role) {
+      updateFields.push('role = @role');
+      request.input('role', sql.NVarChar, role);
+    }
+
+    // Hash password if provided
+    let hashedPassword = null;
+    if (password) {
+      const bcrypt = (await import('bcrypt')).default;
+      hashedPassword = await bcrypt.hash(password, 10);
+      updateFields.push('password_hash = @password_hash');
+      request.input('password_hash', sql.NVarChar, hashedPassword);
+    }
+
+    updateFields.push('updated_at = GETDATE()');
+
+    const updateQuery = `
+      UPDATE admin_users 
+      SET ${updateFields.join(', ')}
+      WHERE id = @adminId
+    `;
+
+    await request.query(updateQuery);
+
+    // Also update in admins table
+    let adminUpdateFields = [];
+    let adminRequest = pool.request().input('username', sql.NVarChar, currentAdmin.recordset[0].username);
+
+    if (email) {
+      adminUpdateFields.push('email = @email');
+      adminRequest.input('email', sql.NVarChar, email);
+    }
+
+    if (full_name !== undefined) {
+      adminUpdateFields.push('full_name = @full_name');
+      adminRequest.input('full_name', sql.NVarChar, full_name || null);
+    }
+
+    if (role) {
+      adminUpdateFields.push('role = @role');
+      adminRequest.input('role', sql.NVarChar, role);
+    }
+
+    if (hashedPassword) {
+      adminUpdateFields.push('password_hash = @password_hash');
+      adminRequest.input('password_hash', sql.NVarChar, hashedPassword);
+    }
+
+    adminUpdateFields.push('updated_at = GETDATE()');
+
+    const adminUpdateQuery = `
+      UPDATE admins 
+      SET ${adminUpdateFields.join(', ')}
+      WHERE username = @username
+    `;
+
+    await adminRequest.query(adminUpdateQuery);
+
+    // Log activity
+    await Admin.logActivity(
+      req.admin.id,
+      'UPDATE',
+      'admin',
+      adminId,
+      `Updated admin: ${currentAdmin.recordset[0].username}`,
+      req.ip,
+      req.headers['user-agent']
+    );
+
+    res.json({
+      success: true,
+      message: 'Admin updated successfully'
+    });
+  } catch (error) {
+    console.error('❌ Error updating admin:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Error updating admin'
+    });
+  }
+});
+
+// Toggle admin status (activate/deactivate)
+router.patch('/admins/:adminId/toggle-status', authenticateAdmin, requireSuperAdmin, async (req, res) => {
+  try {
+    const { adminId } = req.params;
+
+    if (parseInt(adminId) === req.admin.id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot change status of your own account'
+      });
+    }
+
+    const pool = await sql.connect(dbConfig);
+    
+    // Get current status from admin_users
+    const currentAdmin = await pool.request()
+      .input('adminId', sql.Int, adminId)
+      .query('SELECT username, is_active FROM admin_users WHERE id = @adminId');
+
+    if (currentAdmin.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
+      });
+    }
+
+    const currentStatus = currentAdmin.recordset[0].is_active;
+    const newStatus = !currentStatus;
+
+    // Update status in admin_users
+    await pool.request()
+      .input('adminId', sql.Int, adminId)
+      .input('newStatus', sql.Bit, newStatus)
+      .query('UPDATE admin_users SET is_active = @newStatus, updated_at = GETDATE() WHERE id = @adminId');
+
+    // Also update in admins table
+    await pool.request()
+      .input('username', sql.NVarChar, currentAdmin.recordset[0].username)
+      .input('newStatus', sql.Bit, newStatus)
+      .query('UPDATE admins SET is_active = @newStatus, updated_at = GETDATE() WHERE username = @username');
+
+    // Log activity
+    await Admin.logActivity(
+      req.admin.id,
+      newStatus ? 'ACTIVATE' : 'DEACTIVATE',
+      'admin',
+      adminId,
+      `${newStatus ? 'Activated' : 'Deactivated'} admin: ${currentAdmin.recordset[0].username}`,
+      req.ip,
+      req.headers['user-agent']
+    );
+
+    res.json({
+      success: true,
+      message: `Admin ${newStatus ? 'activated' : 'deactivated'} successfully`,
+      is_active: newStatus
+    });
+  } catch (error) {
+    console.error('❌ Error toggling admin status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error toggling admin status'
+    });
+  }
+});
+
+// Delete admin (soft delete)
+router.delete('/admins/:adminId', authenticateAdmin, requireSuperAdmin, async (req, res) => {
+  try {
+    const { adminId } = req.params;
+
+    if (parseInt(adminId) === req.admin.id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete your own account'
+      });
+    }
+
+    const pool = await sql.connect(dbConfig);
+    
+    // Get admin info before deletion from admin_users
+    const adminInfo = await pool.request()
+      .input('adminId', sql.Int, adminId)
+      .query('SELECT username FROM admin_users WHERE id = @adminId');
+
+    if (adminInfo.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
+      });
+    }
+
+    // Soft delete: mark as deleted with timestamp in admin_users
+    await pool.request()
+      .input('adminId', sql.Int, adminId)
+      .query('UPDATE admin_users SET deleted_at = GETDATE(), is_active = 0, updated_at = GETDATE() WHERE id = @adminId');
+
+    // Also soft delete in admins table
+    await pool.request()
+      .input('username', sql.NVarChar, adminInfo.recordset[0].username)
+      .query('UPDATE admins SET deleted_at = GETDATE(), is_active = 0, updated_at = GETDATE() WHERE username = @username');
+
+    // Log activity
+    await Admin.logActivity(
+      req.admin.id,
+      'DELETE',
+      'admin',
+      adminId,
+      `Deleted admin: ${adminInfo.recordset[0].username}`,
+      req.ip,
+      req.headers['user-agent']
+    );
+
+    res.json({
+      success: true,
+      message: 'Admin deleted successfully'
+    });
+  } catch (error) {
+    console.error('❌ Error deleting admin:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting admin'
+    });
+  }
+});
+
 
 // ======================
 // USER CRUD (Missing Endpoints)
@@ -1267,7 +1770,7 @@ router.put('/users/:userId', authenticateAdmin, async (req, res) => {
 });
 
 // Delete user (soft delete)
-router.delete('/users/:userId', doubleCsrfProtection, authenticateAdmin, async (req, res) => {
+router.delete('/users/:userId', authenticateAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -1280,16 +1783,18 @@ router.delete('/users/:userId', doubleCsrfProtection, authenticateAdmin, async (
       });
     }
 
-    // Soft delete by locking account permanently
+    // Soft delete - mark email as deleted to prevent re-registration with same email
+    const deletedEmail = `deleted_${Date.now()}_${user.email}`;
     const sql = `
       UPDATE leads
-      SET account_locked = 1, 
-          locked_until = DATEADD(year, 100, GETDATE()),
+      SET email = ?,
+          contact_name = 'DELETED USER',
+          company_name = 'DELETED',
           updated_at = GETDATE()
       WHERE id = ?;
     `;
 
-    await database.query(sql, [userId]);
+    await database.query(sql, [deletedEmail, userId]);
 
     await Admin.logActivity(
       req.admin.id,
@@ -1431,8 +1936,8 @@ router.get('/assessments/:assessmentId', authenticateAdmin, async (req, res) => 
   }
 });
 
-// Delete assessment (CSRF protected)
-router.delete('/assessments/:assessmentId', doubleCsrfProtection, authenticateAdmin, async (req, res) => {
+// Delete assessment
+router.delete('/assessments/:assessmentId', authenticateAdmin, async (req, res) => {
   try {
     const { assessmentId } = req.params;
     const id = parseInt(assessmentId);
@@ -1483,17 +1988,12 @@ router.delete('/assessments/:assessmentId', doubleCsrfProtection, authenticateAd
 // ======================
 
 // Reorder question
-router.put('/questions/:questionId/reorder', doubleCsrfProtection, authenticateAdmin, async (req, res) => {
+router.put('/questions/:questionId/reorder', authenticateAdmin, async (req, res) => {
   try {
     const { questionId } = req.params;
-    const { direction } = req.body; // 'up' or 'down'
+    const { direction, newOrder } = req.body; // 'up' or 'down' OR direct newOrder
 
-    if (!direction || !['up', 'down'].includes(direction)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid direction. Must be "up" or "down"'
-      });
-    }
+    console.log('📋 Reorder request received:', { questionId, direction, newOrder, body: req.body });
 
     // Get current question
     const getQuestionSql = `SELECT * FROM assessment_questions WHERE id = ?;`;
@@ -1508,9 +2008,90 @@ router.put('/questions/:questionId/reorder', doubleCsrfProtection, authenticateA
 
     const currentQuestion = questionResult.recordset[0];
     const currentOrder = currentQuestion.question_order;
-    const newOrder = direction === 'up' ? currentOrder - 1 : currentOrder + 1;
 
-    if (newOrder < 1) {
+    // Handle direct order assignment (drag and drop)
+    if (newOrder !== undefined && newOrder !== null) {
+      if (newOrder < 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'Order must be at least 1'
+        });
+      }
+
+      // Find question at target position (same type and pillar)
+      const findTargetSql = `
+        SELECT id, question_order FROM assessment_questions 
+        WHERE assessment_type = ? 
+        AND pillar_name = ? 
+        AND question_order = ?
+        AND id != ?;
+      `;
+      const targetResult = await database.query(findTargetSql, [
+        currentQuestion.assessment_type,
+        currentQuestion.pillar_name,
+        newOrder,
+        questionId
+      ]);
+
+      if (targetResult.recordset.length > 0) {
+        const targetQuestionId = targetResult.recordset[0].id;
+        
+        // Use a 3-step swap to avoid unique constraint violation:
+        // 1. Set dragged question to a temporary negative value
+        await database.query(
+          `UPDATE assessment_questions SET question_order = ? WHERE id = ?;`,
+          [-1, questionId]
+        );
+        
+        // 2. Set target question to dragged question's old position
+        await database.query(
+          `UPDATE assessment_questions SET question_order = ? WHERE id = ?;`,
+          [currentOrder, targetQuestionId]
+        );
+        
+        // 3. Set dragged question to its new position
+        await database.query(
+          `UPDATE assessment_questions SET question_order = ? WHERE id = ?;`,
+          [newOrder, questionId]
+        );
+      } else {
+        // No swap needed, just update
+        await database.query(
+          `UPDATE assessment_questions SET question_order = ? WHERE id = ?;`,
+          [newOrder, questionId]
+        );
+      }
+
+      await Admin.logActivity(
+        req.admin.id,
+        'UPDATE',
+        'question',
+        questionId,
+        `Reordered question to position ${newOrder}: ${currentQuestion.question_text.substring(0, 50)}...`,
+        req.ip,
+        req.headers['user-agent']
+      );
+
+      console.log('✅ Question reordered to position:', questionId, newOrder);
+
+      return res.json({
+        success: true,
+        message: 'Question reordered successfully',
+        newOrder: newOrder
+      });
+    }
+
+    // Handle direction-based reordering (arrow buttons)
+    if (!direction || !['up', 'down'].includes(direction)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid direction. Must be "up" or "down", or provide newOrder'
+      });
+    }
+
+    const targetOrder = direction === 'up' ? currentOrder - 1 : currentOrder + 1;
+
+    if (targetOrder < 1) {
       return res.status(400).json({
         success: false,
         message: 'Cannot move question further up'
@@ -1522,13 +2103,12 @@ router.put('/questions/:questionId/reorder', doubleCsrfProtection, authenticateA
       SELECT id FROM assessment_questions 
       WHERE assessment_type = ? 
       AND pillar_name = ? 
-      AND question_order = ?
-      AND is_active = 1;
+      AND question_order = ?;
     `;
     const targetResult = await database.query(findTargetSql, [
       currentQuestion.assessment_type,
       currentQuestion.pillar_name,
-      newOrder
+      targetOrder
     ]);
 
     if (targetResult.recordset.length === 0) {
@@ -1540,14 +2120,23 @@ router.put('/questions/:questionId/reorder', doubleCsrfProtection, authenticateA
 
     const targetQuestionId = targetResult.recordset[0].id;
 
-    // Swap orders
+    // Use a 3-step swap to avoid unique constraint violation:
+    // 1. Set current question to a temporary negative value
     await database.query(
       `UPDATE assessment_questions SET question_order = ? WHERE id = ?;`,
-      [newOrder, questionId]
+      [-1, questionId]
     );
+    
+    // 2. Set target question to current question's old position
     await database.query(
       `UPDATE assessment_questions SET question_order = ? WHERE id = ?;`,
       [currentOrder, targetQuestionId]
+    );
+    
+    // 3. Set current question to its new position
+    await database.query(
+      `UPDATE assessment_questions SET question_order = ? WHERE id = ?;`,
+      [targetOrder, questionId]
     );
 
     await Admin.logActivity(
@@ -1712,7 +2301,12 @@ router.get('/config/industries', authenticateAdmin, async (req, res) => {
     ];
     
     const customIndustries = Array.isArray(result) ? result : [];
-    const allIndustries = [...defaultIndustries, ...customIndustries];
+    
+    // Remove duplicates - prioritize custom industries over defaults
+    const customIndustryNames = new Set(customIndustries.map(i => i.name));
+    const uniqueDefaults = defaultIndustries.filter(d => !customIndustryNames.has(d.name));
+    
+    const allIndustries = [...uniqueDefaults, ...customIndustries];
     
     const response = {
       success: true,
@@ -2316,16 +2910,23 @@ router.get('/config/pillars', authenticateAdmin, async (req, res) => {
     `;
     const customPillars = await database.query(customPillarsSql);
     
-    // Combine question pillars + custom pillars
-    // Add unique IDs to question pillars (they don't have IDs from DB)
-    const basePillars = Array.isArray(questionPillars) 
-      ? questionPillars.map((p, index) => ({ 
-          id: `question-${index + 1}`, 
-          ...p 
-        })) 
-      : [];
+    // Combine question pillars + custom pillars, removing duplicates
+    // Prioritize custom pillars (they have real IDs)
+    const basePillars = Array.isArray(questionPillars) ? questionPillars : [];
     const customList = Array.isArray(customPillars) ? customPillars : [];
-    const allPillars = [...basePillars, ...customList];
+    
+    // Create a map of pillar names from custom pillars
+    const customPillarNames = new Set(customList.map(p => p.name));
+    
+    // Filter out question pillars that already exist in custom pillars
+    const uniqueQuestionPillars = basePillars
+      .filter(p => !customPillarNames.has(p.name))
+      .map((p, index) => ({ 
+        id: `question-${index + 1}`, 
+        ...p 
+      }));
+    
+    const allPillars = [...uniqueQuestionPillars, ...customList];
     
     res.json({
       success: true,
@@ -2428,6 +3029,8 @@ router.put('/config/pillars/:pillarId', authenticateAdmin, async (req, res) => {
     const { pillarId } = req.params;
     const { name, short_name, is_active } = req.body;
 
+    console.log('📋 Updating pillar:', { pillarId, name, short_name, is_active });
+
     // Check if trying to update a default pillar
     if (pillarId && pillarId.startsWith('question-')) {
       return res.status(400).json({
@@ -2435,6 +3038,20 @@ router.put('/config/pillars/:pillarId', authenticateAdmin, async (req, res) => {
         message: 'Cannot modify pillars from assessment questions. Create a custom pillar instead.'
       });
     }
+
+    // Get current pillar data BEFORE updating
+    const currentPillarSql = `SELECT * FROM pillars WHERE id = ?`;
+    const currentResult = await database.query(currentPillarSql, [pillarId]);
+    
+    if (!currentResult.recordset || currentResult.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pillar not found'
+      });
+    }
+
+    const currentPillar = currentResult.recordset[0];
+    console.log('📋 Current pillar:', currentPillar);
 
     const updates = [];
     const params = [];
@@ -2482,23 +3099,28 @@ router.put('/config/pillars/:pillarId', authenticateAdmin, async (req, res) => {
       });
     }
 
-    const pillar = result[0];
+    const pillar = resultArray[0];
 
     // Update all questions using this pillar if name changed
-    if (name !== undefined) {
-      await database.query(`
+    if (name !== undefined && name !== currentPillar.name) {
+      console.log(`📋 Updating questions from "${currentPillar.name}" to "${name}"`);
+      const updateQuestionsNameSql = `
         UPDATE assessment_questions
         SET pillar_name = ?
-        WHERE pillar_name = (SELECT name FROM pillars WHERE id = ? AND name != ?);
-      `, [name, pillarId, name]);
+        WHERE pillar_name = ?;
+      `;
+      await database.query(updateQuestionsNameSql, [name, currentPillar.name]);
     }
 
-    if (short_name !== undefined) {
-      await database.query(`
+    // Update all questions using this pillar if short_name changed
+    if (short_name !== undefined && short_name.toUpperCase() !== currentPillar.short_name) {
+      console.log(`📋 Updating questions short name from "${currentPillar.short_name}" to "${short_name.toUpperCase()}"`);
+      const updateQuestionsShortSql = `
         UPDATE assessment_questions
         SET pillar_short_name = ?
-        WHERE pillar_short_name = (SELECT short_name FROM pillars WHERE id = ? AND short_name != ?);
-      `, [short_name.toUpperCase(), pillarId, short_name.toUpperCase()]);
+        WHERE pillar_short_name = ?;
+      `;
+      await database.query(updateQuestionsShortSql, [short_name.toUpperCase(), currentPillar.short_name]);
     }
 
     await Admin.logActivity(

@@ -38,6 +38,18 @@ const AdminLogin = ({ onLoginSuccess }) => {
         
         console.log('✅ Admin logged in successfully');
         
+        // Check if password change is required
+        if (response.data.mustChangePassword) {
+          console.log('🔒 Password change required for admin');
+          navigate('/change-password', {
+            state: { 
+              message: 'You must change your temporary password before accessing the admin dashboard.',
+              isAdmin: true
+            }
+          });
+          return;
+        }
+        
         if (onLoginSuccess) {
           onLoginSuccess(safeAdminData);
         }

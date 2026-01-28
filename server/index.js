@@ -76,7 +76,7 @@ app.use(cors({
       }
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // restrict methods
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], // restrict methods
   allowedHeaders: ['Content-Type', 'Authorization', 'x-csrf-token'], // ✅ Added CSRF header
   credentials: true // only if you need cookies/auth headers
 }));

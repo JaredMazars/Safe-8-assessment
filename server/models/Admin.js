@@ -21,7 +21,7 @@ class Admin {
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
     
     const sql = `
-      INSERT INTO admin_users (
+      INSERT INTO admins (
         username, email, password_hash, full_name, role, created_by
       ) OUTPUT INSERTED.id
       VALUES (?, ?, ?, ?, ?, ?);
@@ -105,6 +105,7 @@ class Admin {
       const adminSql = `
         SELECT id, username, email, password_hash, full_name, role, is_active, 
                login_attempts, account_locked,
+               ISNULL(must_change_password, 0) as must_change_password,
                CASE 
                  WHEN locked_until IS NULL THEN NULL
                  WHEN locked_until > GETDATE() THEN 1
@@ -179,10 +180,12 @@ class Admin {
             username: admin.username,
             email: admin.email,
             full_name: admin.full_name,
-            role: admin.role
+            role: admin.role,
+            mustChangePassword: admin.must_change_password === 1
           },
           sessionToken,
-          expiresAt: new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000)
+          expiresAt: new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000),
+          mustChangePassword: admin.must_change_password === 1
         };
       } else {
         // Increment failed attempts with SQL Server date calculation
@@ -345,7 +348,7 @@ class Admin {
       
       await database.query(`
         UPDATE admin_users 
-        SET password_hash = ?, updated_at = GETDATE()
+        SET password_hash = ?, must_change_password = 0, updated_at = GETDATE()
         WHERE id = ?
       `, [passwordHash, adminId]);
 

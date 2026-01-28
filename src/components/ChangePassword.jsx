@@ -5,7 +5,12 @@ import api from '../services/api';
 function ChangePassword() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { email, user } = location.state || {};
+  const { email, user, isAdmin, message } = location.state || {};
+
+  // Detect if user is admin
+  const adminToken = localStorage.getItem('adminToken');
+  const adminUser = localStorage.getItem('adminUser');
+  const isAdminUser = isAdmin || adminToken || adminUser;
 
   const [formData, setFormData] = useState({
     currentPassword: '',
@@ -63,15 +68,32 @@ function ChangePassword() {
     setLoading(true);
 
     try {
-      const response = await api.post('/api/lead/change-password', {
-        email: email || user?.email,
-        currentPassword: formData.currentPassword,
-        newPassword: formData.newPassword
-      });
+      // Use appropriate endpoint based on user type
+      const endpoint = isAdminUser ? '/api/admin/change-password' : '/api/lead/change-password';
+      const payload = isAdminUser 
+        ? {
+            oldPassword: formData.currentPassword,
+            newPassword: formData.newPassword
+          }
+        : {
+            email: email || user?.email,
+            currentPassword: formData.currentPassword,
+            newPassword: formData.newPassword
+          };
+
+      const response = await api.post(endpoint, payload);
 
       if (response.data.success) {
         alert('Password changed successfully! Please log in with your new password.');
-        navigate('/', { replace: true });
+        
+        // Clear admin session if admin
+        if (isAdminUser) {
+          localStorage.removeItem('adminToken');
+          localStorage.removeItem('adminUser');
+          navigate('/admin/login', { replace: true });
+        } else {
+          navigate('/', { replace: true });
+        }
       } else {
         setError(response.data.message || 'Failed to change password');
       }
@@ -83,12 +105,12 @@ function ChangePassword() {
     }
   };
 
-  // Redirect if no email/user provided
+  // Redirect if no email/user provided (unless admin with token)
   React.useEffect(() => {
-    if (!email && !user?.email) {
+    if (!isAdminUser && !email && !user?.email) {
       navigate('/', { replace: true });
     }
-  }, [email, user, navigate]);
+  }, [email, user, navigate, isAdminUser]);
 
   return (
     <div className="auth-container">
@@ -96,7 +118,7 @@ function ChangePassword() {
         <div className="auth-header">
           <h1>Change Password</h1>
           <p className="auth-subtitle">
-            For security reasons, you must change your temporary password before continuing.
+            {message || 'For security reasons, you must change your temporary password before continuing.'}
           </p>
         </div>
 

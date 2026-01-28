@@ -48,6 +48,38 @@ if (transporter) {
 }
 
 /**
+ * Generic email sending function
+ * @param {Object} options - Email options
+ * @param {string} options.to - Recipient email address
+ * @param {string} options.subject - Email subject
+ * @param {string} options.html - HTML email content
+ * @param {string} [options.from] - Sender email (optional, uses default)
+ * @returns {Promise<Object>} - Email send result
+ */
+const sendEmail = async ({ to, subject, html, from }) => {
+  if (!transporter) {
+    console.warn('⚠️  Email service not configured - skipping email send');
+    return { success: false, message: 'Email service not configured' };
+  }
+
+  const mailOptions = {
+    from: from || process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject,
+    html
+  };
+
+  try {
+    const result = await transporter.sendMail(mailOptions);
+    console.log('✅ Email sent successfully:', result.messageId);
+    return { success: true, messageId: result.messageId };
+  } catch (error) {
+    console.error('❌ Failed to send email:', error.message);
+    throw error;
+  }
+};
+
+/**
  * Generate HTML email template for assessment results
  * Designed according to Forvis Mazars branding guidelines
  */
@@ -986,6 +1018,7 @@ export const sendAdminCreatedUserEmail = async (userData, tempPassword) => {
 };
 
 export default {
+  sendEmail,
   sendAssessmentResults,
   sendWelcomeEmail,
   sendPasswordResetEmail,

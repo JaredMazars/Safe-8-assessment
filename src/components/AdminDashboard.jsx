@@ -36,12 +36,14 @@ const AdminDashboard = () => {
   const [showQuestionModal, setShowQuestionModal] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState(null);
   const [questionModalMode, setQuestionModalMode] = useState('create');
+  const [draggedQuestion, setDraggedQuestion] = useState(null);
 
   // Assessments Tab
   const [assessments, setAssessments] = useState([]);
   const [assessmentsPagination, setAssessmentsPagination] = useState(null);
   const [assessmentsLoading, setAssessmentsLoading] = useState(false);
   const [assessmentTypeFilter, setAssessmentTypeFilter] = useState('all');
+  const [assessmentSearchTerm, setAssessmentSearchTerm] = useState('');
   const [selectedAssessment, setSelectedAssessment] = useState(null);
   const [showAssessmentModal, setShowAssessmentModal] = useState(false);
 
@@ -70,6 +72,14 @@ const AdminDashboard = () => {
   const [pillars, setPillars] = useState([]);
   const [newPillar, setNewPillar] = useState({ name: '', short_name: '' });
   const [editingPillar, setEditingPillar] = useState(null);
+  const [editingPillarData, setEditingPillarData] = useState({ name: '', short_name: '' });
+
+  // Manage Admins Tab (Super Admin only)
+  const [admins, setAdmins] = useState([]);
+  const [adminsLoading, setAdminsLoading] = useState(false);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [selectedAdmin, setSelectedAdmin] = useState(null);
+  const [adminModalMode, setAdminModalMode] = useState('create');
 
   const ACTION_TYPES = ['CREATE', 'UPDATE', 'DELETE', 'VIEW', 'LOGIN', 'ASSESSMENT_START', 'ASSESSMENT_COMPLETE', 'ASSESSMENT_UPDATE'];
   const ENTITY_TYPES = ['admin', 'user', 'question', 'assessment'];
@@ -105,8 +115,71 @@ const AdminDashboard = () => {
       if (assessmentTypes.length === 0 && industries.length === 0 && pillars.length === 0) {
         loadConfiguration();
       }
+    } else if (activeTab === 'admins' && adminUser?.role === 'super_admin') {
+      loadAdmins();
     }
   }, [activeTab, questionTypeFilter, questionPillarFilter, assessmentTypeFilter, activityActionFilter, activityEntityFilter]);
+
+  // ========== Manage Admins (Super Admin Only) ==========
+  const loadAdmins = async () => {
+    try {
+      console.log('🔄 Loading admins...');
+      setAdminsLoading(true);
+      const response = await api.get('/api/admin/admins');
+      console.log('✅ Admins response:', response.data);
+      console.log('📊 Admins array:', response.data.admins);
+      setAdmins(response.data.admins || []);
+    } catch (err) {
+      console.error('❌ Error loading admins:', err);
+      console.error('Error details:', err.response?.data);
+      setError('Failed to load admins');
+    } finally {
+      setAdminsLoading(false);
+    }
+  };
+
+  const handleCreateAdmin = () => {
+    setSelectedAdmin(null);
+    setAdminModalMode('create');
+    setShowAdminModal(true);
+  };
+
+  const handleEditAdmin = (admin) => {
+    setSelectedAdmin(admin);
+    setAdminModalMode('edit');
+    setShowAdminModal(true);
+  };
+
+  const handleDeleteAdmin = async (adminId) => {
+    if (!window.confirm('Are you sure you want to delete this admin?')) {
+      return;
+    }
+
+    try {
+      await api.delete(`/api/admin/admins/${adminId}`);
+      alert('Admin deleted successfully');
+      loadAdmins();
+    } catch (err) {
+      console.error('Error deleting admin:', err);
+      alert('Failed to delete admin: ' + (err.response?.data?.message || err.message));
+    }
+  };
+
+  const handleToggleAdminStatus = async (adminId, currentStatus) => {
+    const action = currentStatus ? 'deactivate' : 'activate';
+    if (!window.confirm(`Are you sure you want to ${action} this admin?`)) {
+      return;
+    }
+
+    try {
+      await api.patch(`/api/admin/admins/${adminId}/toggle-status`);
+      alert(`Admin ${action}d successfully`);
+      loadAdmins();
+    } catch (err) {
+      console.error('Error toggling admin status:', err);
+      alert(`Failed to ${action} admin: ` + (err.response?.data?.message || err.message));
+    }
+  };
 
   // ========== Dashboard Stats ==========
   const loadDashboardStats = async () => {
@@ -136,7 +209,11 @@ const AdminDashboard = () => {
           search: userSearchTerm || undefined
         }
       });
-      setUsers(response.data.users || []);
+      // Filter out deleted users (those with deleted_ prefix in email)
+      const activeUsers = (response.data.users || []).filter(user => 
+        !user.email.startsWith('deleted_') && user.full_name !== 'DELETED USER'
+      );
+      setUsers(activeUsers);
       setUsersPagination(response.data.pagination);
     } catch (err) {
       console.error('Error loading users:', err);
@@ -217,6 +294,7 @@ const AdminDashboard = () => {
           limit: 20,
           assessment_type: questionTypeFilter !== 'all' ? questionTypeFilter : undefined,
           pillar_name: questionPillarFilter !== 'all' ? questionPillarFilter : undefined
+          // No is_active filter - show all questions
         }
       });
       setQuestions(response.data.questions || []);
@@ -248,21 +326,94 @@ const AdminDashboard = () => {
 
     try {
       await api.delete(`/api/admin/questions/${questionId}`);
+      // Immediately remove from the list (soft delete = set is_active to 0)
+      setQuestions(prevQuestions => prevQuestions.filter(q => q.id !== questionId));
       alert('Question deleted successfully');
-      loadQuestions(questionsPagination?.current_page || 1);
     } catch (err) {
       console.error('Error deleting question:', err);
       alert('Failed to delete question: ' + (err.response?.data?.message || err.message));
+      // Reload on error to ensure consistency
+      loadQuestions(questionsPagination?.current_page || 1);
     }
   };
 
   const handleReorderQuestion = async (questionId, direction) => {
     try {
-      await api.put(`/api/admin/questions/${questionId}/reorder`, { direction });
+      console.log('Reordering question:', questionId, 'direction:', direction);
+      const response = await api.put(`/api/admin/questions/${questionId}/reorder`, { direction });
+      if (response.data.success) {
+        loadQuestions(questionsPagination?.current_page || 1);
+      }
+    } catch (err) {
+      console.error('Error reordering question:', err);
+      console.error('Error details:', err.response?.data);
+      alert('Failed to reorder question: ' + (err.response?.data?.message || err.message));
+    }
+  };
+
+  const handleDragStart = (e, question) => {
+    setDraggedQuestion(question);
+    e.dataTransfer.effectAllowed = 'move';
+    e.currentTarget.style.opacity = '0.5';
+  };
+
+  const handleDragEnd = (e) => {
+    e.currentTarget.style.opacity = '1';
+    setDraggedQuestion(null);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = async (e, targetQuestion) => {
+    e.preventDefault();
+    
+    if (!draggedQuestion || draggedQuestion.id === targetQuestion.id) {
+      return;
+    }
+
+    // Only allow reordering within same assessment type and pillar
+    if (draggedQuestion.assessment_type !== targetQuestion.assessment_type ||
+        draggedQuestion.pillar_name !== targetQuestion.pillar_name) {
+      alert('Questions can only be reordered within the same assessment type and pillar');
+      return;
+    }
+
+    try {
+      // Swap the order values
+      await api.put(`/api/admin/questions/${draggedQuestion.id}/reorder`, {
+        newOrder: targetQuestion.question_order
+      });
+      
       loadQuestions(questionsPagination?.current_page || 1);
     } catch (err) {
       console.error('Error reordering question:', err);
       alert('Failed to reorder question: ' + (err.response?.data?.message || err.message));
+    }
+  };
+
+  const handleToggleQuestionStatus = async (questionId, currentStatus) => {
+    const action = currentStatus ? 'deactivate' : 'activate';
+    if (!window.confirm(`Are you sure you want to ${action} this question?`)) {
+      return;
+    }
+
+    try {
+      const response = await api.patch(`/api/admin/questions/${questionId}/toggle-status`);
+      // Update the question status in the list without reloading
+      setQuestions(prevQuestions => 
+        prevQuestions.map(q => 
+          q.id === questionId 
+            ? { ...q, is_active: response.data.is_active }
+            : q
+        )
+      );
+      alert(`Question ${action}d successfully`);
+    } catch (err) {
+      console.error('Error toggling question status:', err);
+      alert(`Failed to ${action} question: ` + (err.response?.data?.message || err.message));
     }
   };
 
@@ -274,7 +425,8 @@ const AdminDashboard = () => {
         params: {
           page,
           limit: 20,
-          assessment_type: assessmentTypeFilter !== 'all' ? assessmentTypeFilter : undefined
+          assessment_type: assessmentTypeFilter !== 'all' ? assessmentTypeFilter : undefined,
+          search: assessmentSearchTerm || undefined
         }
       });
       setAssessments(response.data.assessments || []);
@@ -285,6 +437,11 @@ const AdminDashboard = () => {
     } finally {
       setAssessmentsLoading(false);
     }
+  };
+
+  const handleAssessmentSearch = (e) => {
+    e.preventDefault();
+    loadAssessments(1);
   };
 
   const handleViewAssessment = async (assessmentId) => {
@@ -582,16 +739,24 @@ const AdminDashboard = () => {
   };
 
   const handleUpdatePillar = async (pillarId, updates) => {
+    if (!updates.name && !updates.short_name && updates.is_active === undefined) {
+      setEditingPillar(null);
+      return;
+    }
+
     try {
+      console.log('Updating pillar:', pillarId, updates);
       const response = await api.put(`/api/admin/config/pillars/${pillarId}`, updates);
 
       if (response.data.success) {
         setEditingPillar(null);
+        setEditingPillarData({ name: '', short_name: '' });
         await loadConfiguration();
         alert('✅ Pillar updated successfully!');
       }
     } catch (error) {
       console.error('Error updating pillar:', error);
+      console.error('Error response:', error.response?.data);
       alert('❌ ' + (error.response?.data?.message || 'Failed to update pillar'));
     }
   };
@@ -714,6 +879,14 @@ const AdminDashboard = () => {
             >
               <i className="fas fa-cog"></i> Configuration
             </button>
+            {adminUser?.role === 'super_admin' && (
+              <button
+                className={`admin-tab ${activeTab === 'admins' ? 'active' : ''}`}
+                onClick={() => setActiveTab('admins')}
+              >
+                <i className="fas fa-user-shield"></i> Manage Admins
+              </button>
+            )}
           </div>
         </div>
 
@@ -866,10 +1039,10 @@ const AdminDashboard = () => {
                           users.map((user) => (
                             <tr key={user.id}>
                               <td>{user.id}</td>
-                              <td>{user.full_name}</td>
-                              <td>{user.email}</td>
-                              <td>{user.company_name || 'N/A'}</td>
-                              <td>{user.industry || 'N/A'}</td>
+                              <td style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={user.full_name}>{user.full_name}</td>
+                              <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={user.email}>{user.email}</td>
+                              <td style={{ maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={user.company_name || 'N/A'}>{user.company_name || 'N/A'}</td>
+                              <td style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={user.industry || 'N/A'}>{user.industry || 'N/A'}</td>
                               <td>{user.total_assessments || 0}</td>
                               <td>{formatDate(user.last_login_at)}</td>
                               <td>
@@ -994,20 +1167,35 @@ const AdminDashboard = () => {
                           </tr>
                         ) : (
                           questions.map((question) => (
-                            <tr key={question.id}>
+                            <tr 
+                              key={question.id}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, question)}
+                              onDragEnd={handleDragEnd}
+                              onDragOver={handleDragOver}
+                              onDrop={(e) => handleDrop(e, question)}
+                              style={{ cursor: 'move' }}
+                            >
                               <td>
                                 <div className="question-order-controls">
-                                  <span>{question.question_order || 0}</span>
+                                  <i className="fas fa-grip-vertical" style={{ marginRight: '8px', color: '#999', cursor: 'grab' }}></i>
+                                  <span style={{ fontWeight: 'bold', minWidth: '30px', display: 'inline-block' }}>{question.question_order || 0}</span>
                                   <div className="order-btns">
                                     <button
-                                      onClick={() => handleReorderQuestion(question.id, 'up')}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleReorderQuestion(question.id, 'up');
+                                      }}
                                       className="btn-reorder"
                                       title="Move up"
                                     >
                                       <i className="fas fa-chevron-up"></i>
                                     </button>
                                     <button
-                                      onClick={() => handleReorderQuestion(question.id, 'down')}
+                                      onClick={(e) => {
+                                      e.stopPropagation();
+                                        handleReorderQuestion(question.id, 'down');
+                                      }}
                                       className="btn-reorder"
                                       title="Move down"
                                     >
@@ -1039,6 +1227,14 @@ const AdminDashboard = () => {
                                   >
                                     <i className="fas fa-edit"></i>
                                     <span>Edit</span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleToggleQuestionStatus(question.id, question.is_active)}
+                                    className={`btn-action ${question.is_active ? 'btn-warning' : 'btn-success'}`}
+                                    title={question.is_active ? 'Deactivate question' : 'Activate question'}
+                                  >
+                                    <i className={`fas ${question.is_active ? 'fa-toggle-off' : 'fa-toggle-on'}`}></i>
+                                    <span>{question.is_active ? 'Deactivate' : 'Activate'}</span>
                                   </button>
                                   <button
                                     onClick={() => handleDeleteQuestion(question.id)}
@@ -1091,6 +1287,19 @@ const AdminDashboard = () => {
               </div>
 
               <div className="admin-filters">
+                <form onSubmit={handleAssessmentSearch} className="admin-search-form">
+                  <input
+                    type="text"
+                    placeholder="Search by user name, email, company, or industry..."
+                    value={assessmentSearchTerm}
+                    onChange={(e) => setAssessmentSearchTerm(e.target.value)}
+                    className="admin-search-input"
+                  />
+                  <button type="submit" className="btn-secondary">
+                    <i className="fas fa-search"></i> Search
+                  </button>
+                </form>
+
                 <select
                   value={assessmentTypeFilter}
                   onChange={(e) => setAssessmentTypeFilter(e.target.value)}
@@ -1616,39 +1825,47 @@ const AdminDashboard = () => {
                             pillars.map(pillar => (
                               <div key={pillar.id || pillar.name || pillar} className="industry-item">
                                 {editingPillar === (pillar.id || pillar.name) ? (
-                                  <div className="edit-pillar">
+                                  <div className="edit-pillar" style={{ display: 'flex', gap: '0.5rem', flex: 1 }}>
                                     <input
                                       type="text"
-                                      defaultValue={pillar.name || pillar}
+                                      className="admin-input"
+                                      value={editingPillarData.name}
+                                      onChange={(e) => setEditingPillarData(prev => ({ ...prev, name: e.target.value }))}
                                       placeholder="Full Name"
-                                      onBlur={(e) => {
-                                        const shortInput = e.target.nextSibling;
-                                        if (e.target.value !== (pillar.name || pillar)) {
-                                          handleUpdatePillar(pillar.id, { 
-                                            name: e.target.value,
-                                            short_name: shortInput?.value || pillar.short_name
-                                          });
-                                        } else {
-                                          setEditingPillar(null);
-                                        }
-                                      }}
-                                      onKeyPress={(e) => {
-                                        if (e.key === 'Enter') {
-                                          const shortInput = e.target.nextSibling;
-                                          handleUpdatePillar(pillar.id, { 
-                                            name: e.target.value,
-                                            short_name: shortInput?.value || pillar.short_name
-                                          });
-                                        }
-                                      }}
-                                      autoFocus
+                                      style={{ flex: 2 }}
                                     />
                                     <input
                                       type="text"
-                                      defaultValue={pillar.short_name || ''}
-                                      placeholder="Short"
-                                      style={{ marginLeft: '0.5rem', maxWidth: '100px' }}
+                                      className="admin-input"
+                                      value={editingPillarData.short_name}
+                                      onChange={(e) => setEditingPillarData(prev => ({ ...prev, short_name: e.target.value }))}
+                                      placeholder="Short Name"
+                                      style={{ flex: 1, maxWidth: '150px' }}
                                     />
+                                    <button
+                                      className="btn-icon"
+                                      onClick={() => {
+                                        handleUpdatePillar(pillar.id, {
+                                          name: editingPillarData.name,
+                                          short_name: editingPillarData.short_name
+                                        });
+                                      }}
+                                      title="Confirm"
+                                      style={{ color: 'var(--fm-green)' }}
+                                    >
+                                      <i className="fas fa-check"></i>
+                                    </button>
+                                    <button
+                                      className="btn-icon"
+                                      onClick={() => {
+                                        setEditingPillar(null);
+                                        setEditingPillarData({ name: '', short_name: '' });
+                                      }}
+                                      title="Cancel"
+                                      style={{ color: 'var(--fm-red)' }}
+                                    >
+                                      <i className="fas fa-times"></i>
+                                    </button>
                                   </div>
                                 ) : (
                                   <>
@@ -1666,7 +1883,13 @@ const AdminDashboard = () => {
                                     {pillar.id && (
                                       <div className="industry-actions">
                                         <button
-                                          onClick={() => setEditingPillar(pillar.id)}
+                                          onClick={() => {
+                                            setEditingPillar(pillar.id);
+                                            setEditingPillarData({
+                                              name: pillar.name || '',
+                                              short_name: pillar.short_name || ''
+                                            });
+                                          }}
                                           className="btn-icon"
                                           title="Edit"
                                         >
@@ -1738,8 +1961,129 @@ const AdminDashboard = () => {
               )}
             </div>
           )}
+
+          {/* Manage Admins Tab (Super Admin Only) */}
+          {activeTab === 'admins' && adminUser?.role === 'super_admin' && (
+            <div className="admin-section">
+              <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2>
+                  <i className="fas fa-user-shield"></i> Manage Admins
+                </h2>
+                <button className="btn-primary" onClick={handleCreateAdmin}>
+                  <i className="fas fa-user-plus"></i> Create Admin
+                </button>
+              </div>
+
+              {adminsLoading ? (
+                <div className="loading-state">
+                  <i className="fas fa-spinner fa-spin"></i>
+                  <p>Loading admins...</p>
+                </div>
+              ) : admins.length === 0 ? (
+                <div className="empty-state">
+                  <i className="fas fa-user-shield"></i>
+                  <p>No admins found</p>
+                  <button className="btn-primary" onClick={handleCreateAdmin} style={{ padding: '10px 20px', fontSize: '14px' }}>
+                    <i className="fas fa-user-plus"></i> Create First Admin
+                  </button>
+                </div>
+              ) : (
+                <div className="admin-table-wrapper">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>Username</th>
+                        <th>Email</th>
+                        <th>Full Name</th>
+                        <th>Role</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {admins.map((admin) => (
+                        <tr key={admin.id}>
+                          <td>
+                            <strong>{admin.username}</strong>
+                            {admin.id === adminUser?.id && (
+                              <span className="badge badge-info" style={{ marginLeft: '8px' }}>You</span>
+                            )}
+                          </td>
+                          <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={admin.email}>{admin.email}</td>
+                          <td>{admin.full_name || '-'}</td>
+                          <td>
+                            <span className={`badge ${admin.role === 'super_admin' ? 'badge-danger' : 'badge-primary'}`}>
+                              {admin.role === 'super_admin' ? 'Super Admin' : 'Admin'}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`status-badge ${admin.is_active ? 'status-active' : 'status-inactive'}`}>
+                              {admin.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                          <td>{new Date(admin.created_at).toLocaleDateString()}</td>
+                          <td>
+                            <div className="admin-action-btns">
+                              <button
+                                onClick={() => handleEditAdmin(admin)}
+                                className="btn-action btn-edit"
+                                title="Edit admin"
+                              >
+                                <i className="fas fa-edit"></i>
+                                <span>Edit</span>
+                              </button>
+                              {admin.id !== adminUser?.id && (
+                                <>
+                                  <button
+                                    className={`btn-action ${admin.is_active ? 'btn-warning' : 'btn-success'}`}
+                                    onClick={() => handleToggleAdminStatus(admin.id, admin.is_active)}
+                                    title={admin.is_active ? 'Deactivate' : 'Activate'}
+                                  >
+                                    <i className={`fas ${admin.is_active ? 'fa-ban' : 'fa-check'}`}></i>
+                                    <span>{admin.is_active ? 'Deactivate' : 'Activate'}</span>
+                                  </button>
+                                  <button
+                                    className="btn-action btn-delete"
+                                    onClick={() => handleDeleteAdmin(admin.id)}
+                                    title="Delete admin"
+                                  >
+                                    <i className="fas fa-trash"></i>
+                                    <span>Delete</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Admin Modal */}
+      {showAdminModal && ReactDOM.createPortal(
+        <AdminModal
+          mode={adminModalMode}
+          admin={selectedAdmin}
+          onClose={() => {
+            setShowAdminModal(false);
+            setSelectedAdmin(null);
+          }}
+          onSuccess={() => {
+            setShowAdminModal(false);
+            setSelectedAdmin(null);
+            loadAdmins();
+          }}
+        />,
+        document.body
+      )}
+
 
       {/* User Modal */}
       {showUserModal && ReactDOM.createPortal(
@@ -1810,6 +2154,289 @@ const AdminDashboard = () => {
     </div>
   );
 };
+
+
+// ========== Admin Modal Component (For Super Admin) ==========
+const AdminModal = ({ mode, admin, onClose, onSuccess }) => {
+  const [formData, setFormData] = useState({
+    username: admin?.username || '',
+    email: admin?.email || '',
+    full_name: admin?.full_name || '',
+    password: '',
+    role: admin?.role || 'admin'
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [tempPassword, setTempPassword] = useState('');
+  const [showTempPassword, setShowTempPassword] = useState(false);
+
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setError('');
+    setShowTempPassword(false);
+
+    // Validation
+    if (formData.password && formData.password.length < 8) {
+      setError('Password must be at least 8 characters');
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      const submitData = {
+        username: formData.username,
+        email: formData.email,
+        full_name: formData.full_name,
+        role: formData.role
+      };
+
+      // Only include password if it's provided
+      if (formData.password) {
+        submitData.password = formData.password;
+      }
+
+      console.log('📤 Submitting admin data:', { ...submitData, password: '***' });
+
+      if (mode === 'create') {
+        const response = await api.post('/api/admin/admins', submitData);
+        console.log('✅ Admin created:', response.data);
+        
+        // Store temp password and show it to admin
+        if (response.data.tempPassword) {
+          setTempPassword(response.data.tempPassword);
+          setShowTempPassword(true);
+        } else {
+          alert('Admin created successfully!');
+          onSuccess();
+        }
+      } else {
+        const response = await api.put(`/api/admin/admins/${admin.id}`, submitData);
+        console.log('✅ Admin updated:', response.data);
+        alert('Admin updated successfully!');
+        onSuccess();
+      }
+    } catch (err) {
+      console.error('❌ Error saving admin:', err);
+      console.error('Error details:', err.response?.data);
+      setError(err.response?.data?.message || 'Failed to save admin');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCloseTempPassword = () => {
+    setShowTempPassword(false);
+    setTempPassword('');
+    onSuccess();
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(tempPassword);
+    alert('Password copied to clipboard!');
+  };
+
+  // Show temp password display after creation
+  if (showTempPassword && tempPassword) {
+    return (
+      <div className="modal-overlay" onClick={handleCloseTempPassword}>
+        <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <h2>✅ Admin Created Successfully</h2>
+            <button className="close-button" onClick={handleCloseTempPassword}>×</button>
+          </div>
+
+          <div className="modal-content">
+            <div style={{ 
+              padding: '20px', 
+              backgroundColor: '#f8f9fa', 
+              border: '2px solid #00539F', 
+              borderRadius: '8px',
+              marginBottom: '20px'
+            }}>
+              <h3 style={{ color: '#00539F', marginBottom: '15px' }}>🔑 Temporary Password</h3>
+              <p style={{ marginBottom: '15px', color: '#666' }}>
+                The admin has been emailed their login credentials. The temporary password is also shown below:
+              </p>
+              
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '10px',
+                backgroundColor: '#fff',
+                padding: '15px',
+                borderRadius: '4px',
+                border: '1px solid #00539F'
+              }}>
+                <code style={{ 
+                  flex: 1,
+                  fontSize: '18px', 
+                  fontWeight: 'bold', 
+                  color: '#00539F',
+                  fontFamily: 'monospace',
+                  letterSpacing: '1px'
+                }}>
+                  {tempPassword}
+                </code>
+                <button 
+                  onClick={copyToClipboard}
+                  className="btn-primary"
+                  style={{ padding: '8px 16px', fontSize: '14px' }}
+                >
+                  Copy
+                </button>
+              </div>
+              
+              <div style={{ 
+                marginTop: '15px', 
+                padding: '12px', 
+                backgroundColor: '#fff3cd', 
+                borderLeft: '4px solid #ffc107',
+                borderRadius: '4px'
+              }}>
+                <p style={{ margin: 0, fontSize: '13px', color: '#856404' }}>
+                  <strong>⚠️ Security Notice:</strong> The admin will be required to change this password on first login.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ 
+              padding: '20px', 
+              backgroundColor: '#e8f4f8',
+              border: '1px solid #00539F',
+              borderRadius: '8px',
+              marginBottom: '25px'
+            }}>
+              <h4 style={{ margin: '0 0 12px 0', color: '#00539F', fontSize: '16px' }}>
+                📧 Email Sent To:
+              </h4>
+              <p style={{ margin: 0, color: '#333', fontSize: '15px', fontWeight: '500' }}>
+                {formData.email}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>{mode === 'create' ? 'Create New Admin' : 'Edit Admin'}</h2>
+          <button className="modal-close" onClick={onClose}>
+            <i className="fas fa-times"></i>
+          </button>
+        </div>
+        <div className="modal-body">
+          {error && <div className="error-message">{error}</div>}
+          <form onSubmit={handleSubmit} className="admin-form">
+            <div className="form-group">
+              <label>Username *</label>
+              <input
+                type="text"
+                name="username"
+                value={formData.username}
+                onChange={handleChange}
+                required
+                disabled={mode === 'edit'}
+                placeholder="admin_user"
+                className="form-input"
+              />
+              {mode === 'edit' && (
+                <small style={{ color: '#666', display: 'block', marginTop: '4px' }}>Username cannot be changed</small>
+              )}
+            </div>
+
+            <div className="form-group">
+              <label>Email *</label>
+              <input
+                type="email"
+                name="email"
+                value={formData.email}
+                onChange={handleChange}
+                required
+                placeholder="admin@example.com"
+                className="form-input"
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Full Name</label>
+              <input
+                type="text"
+                name="full_name"
+                value={formData.full_name}
+                onChange={handleChange}
+                placeholder="John Doe"
+                className="form-input"
+              />
+            </div>
+
+            {mode === 'edit' && (
+              <div className="form-group">
+                <label>New Password (leave blank to keep current)</label>
+                <input
+                  type="password"
+                  name="password"
+                  value={formData.password}
+                  onChange={handleChange}
+                  placeholder="Leave blank to keep current password"
+                  minLength="8"
+                  className="form-input"
+                />
+                <small style={{ color: '#666', display: 'block', marginTop: '4px' }}>
+                  Only enter a password if you want to change it
+                </small>
+              </div>
+            )}
+
+            <div className="form-group">
+              <label>Role *</label>
+              <select
+                name="role"
+                value={formData.role}
+                onChange={handleChange}
+                required
+                className="form-input"
+              >
+                <option value="admin">Admin</option>
+                <option value="super_admin">Super Admin</option>
+              </select>
+              <small style={{ color: '#666', display: 'block', marginTop: '4px' }}>
+                Super Admins can manage other admins. Regular Admins can only manage users and content.
+              </small>
+            </div>
+
+            <div className="form-actions">
+              <button type="button" className="btn-secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button type="submit" className="btn-primary" disabled={isSubmitting}>
+                {isSubmitting ? (
+                  <>
+                    <i className="fas fa-spinner fa-spin"></i> Saving...
+                  </>
+                ) : (
+                  <>
+                    <i className={`fas ${mode === 'create' ? 'fa-plus' : 'fa-save'}`}></i>
+                    {mode === 'create' ? ' Create Admin' : ' Update Admin'}
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 // ========== User Modal Component ==========
 const UserModal = ({ mode, user, onClose, onSuccess, industries }) => {
