@@ -40,6 +40,7 @@ const authLimiter = rateLimit({
   message: 'Too many login attempts from this IP, please try again after 15 minutes',
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false, // Disable validation to allow custom keyGenerator
   keyGenerator: (req) => {
     // Extract IP address without port number
     const ip = req.ip || req.connection?.remoteAddress || 'unknown';
@@ -59,6 +60,7 @@ const apiLimiter = rateLimit({
   message: 'Too many requests from this IP, please try again later',
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false, // Disable validation to allow custom keyGenerator
   keyGenerator: (req) => {
     // Extract IP address without port number
     const ip = req.ip || req.connection?.remoteAddress || 'unknown';
