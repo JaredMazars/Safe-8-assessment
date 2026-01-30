@@ -5,6 +5,8 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 import compression from 'compression';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { generateToken, doubleCsrfProtection, cookieParser } from './middleware/csrf.js';
 import database from './config/database.js';
 import './services/emailService.js'; // Initialize email service
@@ -21,6 +23,9 @@ import errorHandlerModule from './middleware/errorHandler.js';
 const { errorHandler } = errorHandlerModule;
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || process.env.WEBSITES_PORT || 8080;
@@ -98,6 +103,13 @@ if (process.env.NODE_ENV === 'production') {
 
 // ✅ Compression middleware for better performance (gzip)
 app.use(compression());
+
+// ✅ Serve static frontend files in production
+if (process.env.NODE_ENV === 'production') {
+  const distPath = path.join(__dirname, '..', 'dist');
+  app.use(express.static(distPath));
+  console.log(`📁 Serving static files from: ${distPath}`);
+}
 
 // ✅ Request size limits for DoS protection
 app.use(express.json({ limit: '10mb' }));
@@ -215,13 +227,24 @@ app.get('/', (req, res) => {
       lead: '/api/lead'
     }
   });
-});
+// ✅ Centralized error handling middleware
+app.use(errorHandler);
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', message: 'Server is running' });
-});
-
+// Serve React app for all non-API routes in production
+if (process.env.NODE_ENV === 'production') {
+  app.get('*', (req, res) => {
+    // Don't serve index.html for API routes
+    if (req.path.startsWith('/api') || req.path.startsWith('/health')) {
+      return res.status(404).json({ error: 'Route not found' });
+    }
+    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  });
+} else {
+  // 404 handler for development
+  app.use('*', (req, res) => {
+    res.status(404).json({ error: 'Route not found' });
+  });
+}
 // ✅ Centralized error handling middleware
 app.use(errorHandler);
 

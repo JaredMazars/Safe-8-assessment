@@ -9,34 +9,45 @@ echo "Directory contents:"
 ls -la
 
 # Determine correct path
-if [ -d "/home/site/wwwroot/server" ]; then
-    SERVER_DIR="/home/site/wwwroot/server"
-    echo "Using Azure path: $SERVER_DIR"
-elif [ -d "server" ]; then
-    SERVER_DIR="server"
-    echo "Using relative path: $SERVER_DIR"
+if [ -d "/home/site/wwwroot" ]; then
+    WORKDIR="/home/site/wwwroot"
+    echo "Using Azure path: $WORKDIR"
 else
-    echo "Error: Cannot find server directory"
-    echo "Available directories:"
-    ls -la
-    exit 1
+    WORKDIR="."
+    echo "Using current directory: $WORKDIR"
+fi
+
+cd "$WORKDIR"
+
+# Build frontend if not already built
+if [ ! -d "dist" ]; then
+    echo "Building frontend..."
+    npm install
+    npm run build
+else
+    echo "Frontend already built (dist folder exists)"
 fi
 
 # Navigate to server directory
+if [ -d "server" ]; then
+    SERVER_DIR="server"
+else
+    echo "Error: Cannot find server directory"
+    exit 1
+fi
+
 echo "Navigating to $SERVER_DIR..."
 cd "$SERVER_DIR"
 
-echo "Server directory contents:"
-ls -la
-
-# Install dependencies if needed
+# Install server dependencies if needed
 if [ ! -d "node_modules" ]; then
-    echo "Installing dependencies..."
+    echo "Installing server dependencies..."
     npm install --production --no-optional
 else
-    echo "Dependencies already installed"
+    echo "Server dependencies already installed"
 fi
 
 # Start the application
 echo "Starting Node.js server..."
+export NODE_ENV=production
 exec node index.js
