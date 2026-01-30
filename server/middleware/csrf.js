@@ -67,10 +67,6 @@ const generateCsrfToken = (req, res) => {
     throw error;
   }
 };
-  });
-  
-  return token;
-};
 
 // Export the functions
 export { generateCsrfToken as generateToken, doubleCsrfProtection, cookieParser };
