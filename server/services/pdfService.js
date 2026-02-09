@@ -258,7 +258,7 @@ export const generateAssessmentPDF = (userData, assessmentData, outputPath) => {
       doc.fontSize(18)
          .font('Helvetica-Bold')
          .fillColor(colors.secondaryRed)
-         .text('Key Areas for Improvement', 50, yPosition);
+         .text('Critical Gap Analysis', 50, yPosition);
 
       doc.moveTo(50, yPosition + 25)
          .lineTo(doc.page.width - 50, yPosition + 25)
@@ -268,52 +268,291 @@ export const generateAssessmentPDF = (userData, assessmentData, outputPath) => {
 
       yPosition += 45;
 
-      if (insights.gap_analysis && insights.gap_analysis.length > 0) {
-        insights.gap_analysis.forEach((gap, index) => {
-          if (yPosition > 720) {
+      // Calculate gaps for each pillar
+      const bestPractice = 80;
+      const gaps = dimension_scores
+        .map(pillar => ({
+          name: pillar.pillar_name,
+          current: pillar.score,
+          gap: bestPractice - pillar.score,
+          priority: (bestPractice - pillar.score) >= 40 ? 'Critical' :
+                   (bestPractice - pillar.score) >= 20 ? 'High' : 'Moderate'
+        }))
+        .filter(g => g.gap > 0)
+        .sort((a, b) => b.gap - a.gap);
+
+      if (gaps.length > 0) {
+        gaps.forEach((gap, index) => {
+          if (yPosition > 700) {
             doc.addPage();
             yPosition = 50;
           }
 
-          // Bullet point
-          doc.circle(58, yPosition + 5, 2.5).fill(colors.secondaryRed);
+          // Priority color
+          const priorityColor = gap.priority === 'Critical' ? colors.secondaryRed :
+                               gap.priority === 'High' ? colors.accentOrange : '#F7C948';
 
-          doc.fontSize(10)
-             .font('Helvetica')
+          // Priority badge
+          doc.rect(50, yPosition, 8, 45)
+             .fill(priorityColor);
+
+          // Gap box
+          doc.rect(58, yPosition, doc.page.width - 108, 45)
+             .fillAndStroke('#FAFAFA', colors.lightGray);
+
+          // Pillar name
+          doc.fontSize(11)
+             .font('Helvetica-Bold')
              .fillColor(colors.darkGray)
-             .text(gap, 75, yPosition, {
-               width: doc.page.width - 125,
-               align: 'justify',
-               lineGap: 3
-             });
+             .text(gap.name, 70, yPosition + 8);
 
-          yPosition += doc.heightOfString(gap, {
-            width: doc.page.width - 125,
-            lineGap: 3
-          }) + 12;
+          // Gap details
+          doc.fontSize(9)
+             .font('Helvetica')
+             .fillColor(colors.mediumGray)
+             .text(`Current: ${gap.current.toFixed(1)}% | Best Practice: ${bestPractice}% | Gap: ${gap.gap.toFixed(0)} points`, 
+                   70, yPosition + 24);
+
+          // Priority label
+          doc.fontSize(8)
+             .font('Helvetica-Bold')
+             .fillColor(priorityColor)
+             .text(`${gap.priority} Priority`, doc.page.width - 140, yPosition + 15);
+
+          yPosition += 55;
         });
       } else {
         doc.fontSize(10)
            .font('Helvetica')
            .fillColor(colors.mediumGray)
-           .text('No specific gaps identified at this time.', 75, yPosition);
+           .text('No significant gaps identified. You\'re performing at or above best practice levels!', 75, yPosition);
         yPosition += 30;
       }
 
-      // Recommendations Section
+      // Summary Statistics
+      yPosition += 20;
+      if (yPosition > 680) {
+        doc.addPage();
+        yPosition = 50;
+      }
+
+      const excellent = dimension_scores.filter(d => d.score >= 80).length;
+      const good = dimension_scores.filter(d => d.score >= 60 && d.score < 80).length;
+      const focus = dimension_scores.filter(d => d.score < 60).length;
+
+      doc.fontSize(14)
+         .font('Helvetica-Bold')
+         .fillColor(colors.primaryBlue)
+         .text('Performance Summary', 50, yPosition);
+
       yPosition += 30;
+
+      // Three stat boxes side by side
+      const boxWidth = (doc.page.width - 130) / 3;
+      const boxStartX = 50;
+
+      // Excellent
+      doc.rect(boxStartX, yPosition, boxWidth, 60)
+         .fillAndStroke('#E8F5E9', '#4CAF50');
+      
+      doc.fontSize(24)
+         .font('Helvetica-Bold')
+         .fillColor('#4CAF50')
+         .text(excellent.toString(), boxStartX, yPosition + 12, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      doc.fontSize(10)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Excellent', boxStartX, yPosition + 42, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      // Good
+      doc.rect(boxStartX + boxWidth + 10, yPosition, boxWidth, 60)
+         .fillAndStroke('#E3F2FD', '#2196F3');
+
+      doc.fontSize(24)
+         .font('Helvetica-Bold')
+         .fillColor('#2196F3')
+         .text(good.toString(), boxStartX + boxWidth + 10, yPosition + 12, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      doc.fontSize(10)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Good', boxStartX + boxWidth + 10, yPosition + 42, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      // Focus Areas
+      doc.rect(boxStartX + (boxWidth + 10) * 2, yPosition, boxWidth, 60)
+         .fillAndStroke('#FFF3E0', '#FF9800');
+
+      doc.fontSize(24)
+         .font('Helvetica-Bold')
+         .fillColor('#FF9800')
+         .text(focus.toString(), boxStartX + (boxWidth + 10) * 2, yPosition + 12, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      doc.fontSize(10)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Focus Areas', boxStartX + (boxWidth + 10) * 2, yPosition + 42, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      yPosition += 80;
+
+      // ===== PAGE 4: RECOMMENDED SERVICES =====
+      doc.addPage();
+      yPosition = 50;
+
+      doc.fontSize(18)
+         .font('Helvetica-Bold')
+         .fillColor(colors.primaryBlue)
+         .text('Recommended Services & Solutions', 50, yPosition);
+
+      doc.moveTo(50, yPosition + 25)
+         .lineTo(doc.page.width - 50, yPosition + 25)
+         .strokeColor(colors.primaryBlue)
+         .lineWidth(2)
+         .stroke();
+
+      yPosition += 45;
+
+      // Service 1: AI Strategy & Roadmap
+      doc.rect(50, yPosition, doc.page.width - 100, 100)
+         .fillAndStroke('#F0F7FF', colors.lightGray);
+
+      // Icon circle
+      doc.circle(70, yPosition + 20, 12)
+         .fill(colors.primaryBlue);
+
+      doc.fontSize(10)
+         .font('Helvetica-Bold')
+         .fillColor(colors.white)
+         .text('💡', 66, yPosition + 14);
+
+      doc.fontSize(12)
+         .font('Helvetica-Bold')
+         .fillColor(colors.darkGray)
+         .text('AI Strategy & Roadmap Development', 95, yPosition + 15);
+
+      // Recommended badge
+      doc.rect(95, yPosition + 35, 180, 16)
+         .fillAndStroke('#FFF3CD', '#FFC107');
+
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#856404')
+         .text('⭐ Recommended for scores below 60%', 102, yPosition + 40);
+
+      doc.fontSize(9)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Develop a comprehensive AI strategy aligned with business objectives and create a prioritized implementation roadmap.', 
+               95, yPosition + 60, {
+                 width: doc.page.width - 190,
+                 lineGap: 2
+               });
+
+      yPosition += 115;
+
+      // Service 2: Data Foundation & Governance
+      doc.rect(50, yPosition, doc.page.width - 100, 100)
+         .fillAndStroke('#F0F7FF', colors.lightGray);
+
+      doc.circle(70, yPosition + 20, 12)
+         .fill(colors.primaryBlue);
+
+      doc.fontSize(10)
+         .font('Helvetica-Bold')
+         .fillColor(colors.white)
+         .text('📊', 66, yPosition + 14);
+
+      doc.fontSize(12)
+         .font('Helvetica-Bold')
+         .fillColor(colors.darkGray)
+         .text('Data Foundation & Governance', 95, yPosition + 15);
+
+      doc.rect(95, yPosition + 35, 140, 16)
+         .fillAndStroke('#D1F2EB', '#00A67E');
+
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#004D40')
+         .text('✓ Essential for AI success', 102, yPosition + 40);
+
+      doc.fontSize(9)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Establish robust data governance frameworks and improve data quality to support AI initiatives.', 
+               95, yPosition + 60, {
+                 width: doc.page.width - 190,
+                 lineGap: 2
+               });
+
+      yPosition += 115;
+
+      // Service 3: AI Talent & Capability Building
+      doc.rect(50, yPosition, doc.page.width - 100, 100)
+         .fillAndStroke('#F0F7FF', colors.lightGray);
+
+      doc.circle(70, yPosition + 20, 12)
+         .fill(colors.primaryBlue);
+
+      doc.fontSize(10)
+         .font('Helvetica-Bold')
+         .fillColor(colors.white)
+         .text('👥', 66, yPosition + 14);
+
+      doc.fontSize(12)
+         .font('Helvetica-Bold')
+         .fillColor(colors.darkGray)
+         .text('AI Talent & Capability Building', 95, yPosition + 15);
+
+      doc.rect(95, yPosition + 35, 180, 16)
+         .fillAndStroke('#E8F5E9', '#4CAF50');
+
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#1B5E20')
+         .text('✓ Long-term competitive advantage', 102, yPosition + 40);
+
+      doc.fontSize(9)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Build internal AI capabilities through training programs and strategic hiring recommendations.', 
+               95, yPosition + 60, {
+                 width: doc.page.width - 190,
+                 lineGap: 2
+               });
+
+      yPosition += 130;
+
+      // ===== PAGE 5: NEXT STEPS & INSIGHTS =====
       if (yPosition > 650) {
         doc.addPage();
         yPosition = 50;
       }
 
-      doc.fontSize(18)
+      doc.fontSize(16)
          .font('Helvetica-Bold')
          .fillColor(colors.primaryBlue)
-         .text('Recommended Next Steps', 50, yPosition);
+         .text('Key Insights & Recommendations', 50, yPosition);
 
-      doc.moveTo(50, yPosition + 25)
-         .lineTo(doc.page.width - 50, yPosition + 25)
+      doc.moveTo(50, yPosition + 22)
+         .lineTo(doc.page.width - 50, yPosition + 22)
          .strokeColor(colors.primaryBlue)
          .lineWidth(2)
          .stroke();
@@ -415,6 +654,15 @@ export const generateAssessmentPDFBuffer = (userData, assessmentData) => {
         assessment_type,
         completed_at 
       } = assessmentData;
+
+      // Debug logging
+      console.log('📄 PDF Generation Debug:', {
+        overall_score,
+        dimension_scores_type: typeof dimension_scores,
+        dimension_scores_length: Array.isArray(dimension_scores) ? dimension_scores.length : 'NOT ARRAY',
+        dimension_scores_sample: Array.isArray(dimension_scores) ? dimension_scores.slice(0, 2) : dimension_scores,
+        insights_keys: insights ? Object.keys(insights) : 'NO INSIGHTS'
+      });
 
       const chunks = [];
       const doc = new PDFDocument({
@@ -635,10 +883,11 @@ export const generateAssessmentPDFBuffer = (userData, assessmentData) => {
       doc.addPage();
       yPosition = 50;
 
+      // Gap Analysis Section
       doc.fontSize(18)
          .font('Helvetica-Bold')
          .fillColor(colors.secondaryRed)
-         .text('Key Areas for Improvement', 50, yPosition);
+         .text('Critical Gap Analysis', 50, yPosition);
 
       doc.moveTo(50, yPosition + 25)
          .lineTo(doc.page.width - 50, yPosition + 25)
@@ -648,41 +897,159 @@ export const generateAssessmentPDFBuffer = (userData, assessmentData) => {
 
       yPosition += 45;
 
-      if (insights.gap_analysis && insights.gap_analysis.length > 0) {
-        insights.gap_analysis.forEach((gap) => {
-          if (yPosition > 720) {
+      // Calculate gaps for each pillar
+      const bestPractice = 80;
+      const gaps = dimension_scores
+        .map(pillar => ({
+          name: pillar.pillar_name,
+          current: pillar.score,
+          gap: bestPractice - pillar.score,
+          priority: (bestPractice - pillar.score) >= 40 ? 'Critical' :
+                   (bestPractice - pillar.score) >= 20 ? 'High' : 'Moderate'
+        }))
+        .filter(g => g.gap > 0)
+        .sort((a, b) => b.gap - a.gap);
+
+      if (gaps.length > 0) {
+        gaps.forEach((gap, index) => {
+          if (yPosition > 700) {
             doc.addPage();
             yPosition = 50;
           }
 
-          doc.circle(58, yPosition + 5, 2.5).fill(colors.secondaryRed);
+          // Priority color
+          const priorityColor = gap.priority === 'Critical' ? colors.secondaryRed :
+                               gap.priority === 'High' ? colors.accentOrange : '#F7C948';
 
-          doc.fontSize(10)
-             .font('Helvetica')
+          // Priority badge
+          doc.rect(50, yPosition, 8, 45)
+             .fill(priorityColor);
+
+          // Gap box
+          doc.rect(58, yPosition, doc.page.width - 108, 45)
+             .fillAndStroke('#FAFAFA', colors.lightGray);
+
+          // Pillar name
+          doc.fontSize(11)
+             .font('Helvetica-Bold')
              .fillColor(colors.darkGray)
-             .text(gap, 75, yPosition, {
-               width: doc.page.width - 125,
-               align: 'justify',
-               lineGap: 3
-             });
+             .text(gap.name, 70, yPosition + 8);
 
-          yPosition += doc.heightOfString(gap, {
-            width: doc.page.width - 125,
-            lineGap: 3
-          }) + 12;
+          // Gap details
+          doc.fontSize(9)
+             .font('Helvetica')
+             .fillColor(colors.mediumGray)
+             .text(`Current: ${gap.current.toFixed(1)}% | Best Practice: ${bestPractice}% | Gap: ${gap.gap.toFixed(0)} points`, 
+                   70, yPosition + 24);
+
+          // Priority label
+          doc.fontSize(8)
+             .font('Helvetica-Bold')
+             .fillColor(priorityColor)
+             .text(`${gap.priority} Priority`, doc.page.width - 140, yPosition + 15);
+
+          yPosition += 55;
         });
+      } else {
+        doc.fontSize(10)
+           .font('Helvetica')
+           .fillColor(colors.mediumGray)
+           .text('No significant gaps identified. You\'re performing at or above best practice levels!', 75, yPosition);
+        yPosition += 30;
       }
 
-      yPosition += 30;
-      if (yPosition > 650) {
+      // Summary Statistics
+      yPosition += 20;
+      if (yPosition > 680) {
         doc.addPage();
         yPosition = 50;
       }
 
+      const excellent = dimension_scores.filter(d => d.score >= 80).length;
+      const good = dimension_scores.filter(d => d.score >= 60 && d.score < 80).length;
+      const focus = dimension_scores.filter(d => d.score < 60).length;
+
+      doc.fontSize(14)
+         .font('Helvetica-Bold')
+         .fillColor(colors.primaryBlue)
+         .text('Performance Summary', 50, yPosition);
+
+      yPosition += 30;
+
+      // Three stat boxes side by side
+      const boxWidth = (doc.page.width - 130) / 3;
+      const boxStartX = 50;
+
+      // Excellent
+      doc.rect(boxStartX, yPosition, boxWidth, 60)
+         .fillAndStroke('#E8F5E9', '#4CAF50');
+      
+      doc.fontSize(24)
+         .font('Helvetica-Bold')
+         .fillColor('#4CAF50')
+         .text(excellent.toString(), boxStartX, yPosition + 12, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      doc.fontSize(10)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Excellent', boxStartX, yPosition + 42, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      // Good
+      doc.rect(boxStartX + boxWidth + 10, yPosition, boxWidth, 60)
+         .fillAndStroke('#E3F2FD', '#2196F3');
+
+      doc.fontSize(24)
+         .font('Helvetica-Bold')
+         .fillColor('#2196F3')
+         .text(good.toString(), boxStartX + boxWidth + 10, yPosition + 12, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      doc.fontSize(10)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Good', boxStartX + boxWidth + 10, yPosition + 42, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      // Focus Areas
+      doc.rect(boxStartX + (boxWidth + 10) * 2, yPosition, boxWidth, 60)
+         .fillAndStroke('#FFF3E0', '#FF9800');
+
+      doc.fontSize(24)
+         .font('Helvetica-Bold')
+         .fillColor('#FF9800')
+         .text(focus.toString(), boxStartX + (boxWidth + 10) * 2, yPosition + 12, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      doc.fontSize(10)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Focus Areas', boxStartX + (boxWidth + 10) * 2, yPosition + 42, {
+           width: boxWidth,
+           align: 'center'
+         });
+
+      yPosition += 80;
+
+      // ===== PAGE 4: RECOMMENDED SERVICES =====
+      doc.addPage();
+      yPosition = 50;
+
       doc.fontSize(18)
          .font('Helvetica-Bold')
          .fillColor(colors.primaryBlue)
-         .text('Recommended Next Steps', 50, yPosition);
+         .text('Recommended Services & Solutions', 50, yPosition);
 
       doc.moveTo(50, yPosition + 25)
          .lineTo(doc.page.width - 50, yPosition + 25)
@@ -692,32 +1059,115 @@ export const generateAssessmentPDFBuffer = (userData, assessmentData) => {
 
       yPosition += 45;
 
-      if (insights.service_recommendations && insights.service_recommendations.length > 0) {
-        insights.service_recommendations.forEach((rec, index) => {
-          if (yPosition > 720) {
-            doc.addPage();
-            yPosition = 50;
-          }
+      // Service 1: AI Strategy & Roadmap
+      doc.rect(50, yPosition, doc.page.width - 100, 100)
+         .fillAndStroke('#F0F7FF', colors.lightGray);
 
-          doc.fontSize(10)
-             .font('Helvetica-Bold')
-             .fillColor(colors.primaryBlue)
-             .text(`${index + 1}.`, 50, yPosition);
+      // Icon circle
+      doc.circle(70, yPosition + 20, 12)
+         .fill(colors.primaryBlue);
 
-          doc.font('Helvetica')
-             .fillColor(colors.darkGray)
-             .text(rec, 75, yPosition, {
-               width: doc.page.width - 125,
-               align: 'justify',
-               lineGap: 3
-             });
+      doc.fontSize(10)
+         .font('Helvetica-Bold')
+         .fillColor(colors.white)
+         .text('S', 66, yPosition + 14);
 
-          yPosition += doc.heightOfString(rec, {
-            width: doc.page.width - 125,
-            lineGap: 3
-          }) + 12;
-        });
-      }
+      doc.fontSize(12)
+         .font('Helvetica-Bold')
+         .fillColor(colors.darkGray)
+         .text('AI Strategy & Roadmap Development', 95, yPosition + 15);
+
+      // Recommended badge
+      doc.rect(95, yPosition + 35, 180, 16)
+         .fillAndStroke('#FFF3CD', '#FFC107');
+
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#856404')
+         .text('★ Recommended for scores below 60%', 102, yPosition + 40);
+
+      doc.fontSize(9)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Develop a comprehensive AI strategy aligned with business objectives and create a prioritized implementation roadmap.', 
+               95, yPosition + 60, {
+                 width: doc.page.width - 190,
+                 lineGap: 2
+               });
+
+      yPosition += 115;
+
+      // Service 2: Data Foundation & Governance
+      doc.rect(50, yPosition, doc.page.width - 100, 100)
+         .fillAndStroke('#F0F7FF', colors.lightGray);
+
+      doc.circle(70, yPosition + 20, 12)
+         .fill(colors.primaryBlue);
+
+      doc.fontSize(10)
+         .font('Helvetica-Bold')
+         .fillColor(colors.white)
+         .text('D', 66, yPosition + 14);
+
+      doc.fontSize(12)
+         .font('Helvetica-Bold')
+         .fillColor(colors.darkGray)
+         .text('Data Foundation & Governance', 95, yPosition + 15);
+
+      doc.rect(95, yPosition + 35, 140, 16)
+         .fillAndStroke('#D1F2EB', '#00A67E');
+
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#004D40')
+         .text('✓ Essential for AI success', 102, yPosition + 40);
+
+      doc.fontSize(9)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Establish robust data governance frameworks and improve data quality to support AI initiatives.', 
+               95, yPosition + 60, {
+                 width: doc.page.width - 190,
+                 lineGap: 2
+               });
+
+      yPosition += 115;
+
+      // Service 3: AI Talent & Capability Building
+      doc.rect(50, yPosition, doc.page.width - 100, 100)
+         .fillAndStroke('#F0F7FF', colors.lightGray);
+
+      doc.circle(70, yPosition + 20, 12)
+         .fill(colors.primaryBlue);
+
+      doc.fontSize(10)
+         .font('Helvetica-Bold')
+         .fillColor(colors.white)
+         .text('T', 66, yPosition + 14);
+
+      doc.fontSize(12)
+         .font('Helvetica-Bold')
+         .fillColor(colors.darkGray)
+         .text('AI Talent & Capability Building', 95, yPosition + 15);
+
+      doc.rect(95, yPosition + 35, 180, 16)
+         .fillAndStroke('#E8F5E9', '#4CAF50');
+
+      doc.fontSize(8)
+         .font('Helvetica-Bold')
+         .fillColor('#1B5E20')
+         .text('✓ Long-term competitive advantage', 102, yPosition + 40);
+
+      doc.fontSize(9)
+         .font('Helvetica')
+         .fillColor(colors.mediumGray)
+         .text('Build internal AI capabilities through training programs and strategic hiring recommendations.', 
+               95, yPosition + 60, {
+                 width: doc.page.width - 190,
+                 lineGap: 2
+               });
+
+      yPosition += 130;
 
       yPosition += 30;
       if (yPosition > 650) {

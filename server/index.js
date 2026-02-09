@@ -16,6 +16,7 @@ import leadRouter from './routes/lead.js';
 import assessmentResponseRouter from './routes/assessmentResponse.js';
 import userEngagementRouter from './routes/userEngagement.js';
 import assessmentRouter from './routes/assessments.js';
+import singleAssessmentRouter from './routes/assessment.js';
 import adminRouter from './routes/admin.js';
 import logger from './utils/logger.js';
 import errorHandlerModule from './middleware/errorHandler.js';
@@ -244,6 +245,7 @@ app.use('/api/user-engagement', userEngagementRouter);
 // ✅ User assessment routes (NO CSRF - public endpoints for users to submit assessments)
 // These are intentionally left unprotected to allow seamless user experience
 app.use('/api/assessment-response', assessmentResponseRouter);
+app.use('/api/assessment', singleAssessmentRouter);
 app.use('/api/assessments', assessmentRouter);
 app.use('/api/questions', responseRouter);
 

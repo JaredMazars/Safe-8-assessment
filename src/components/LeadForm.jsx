@@ -290,11 +290,33 @@ const LeadForm = ({ assessmentType, industry, onSubmit }) => {
                   <p className="field-error">{errors.email}</p>
                 )}
               </div>
-              
+              {/* Country */}
+              <div className="form-row-two">
+                <div className="form-field">
+                  <label htmlFor="country" className="field-label">
+                    Country <span className="required">*</span>
+                  </label>
+                  <select
+                    id="country"
+                    name="country"
+                    value={formData.country}
+                    onChange={handleChange}
+                    className="field-input"
+                    required
+                  >
+                    <option value="">Select country</option>
+                    {COUNTRIES.map(country => (
+                      <option key={country} value={country}>{country}</option>
+                    ))}
+                  </select>
+                  {errors.country && (
+                    <p className="field-error">{errors.country}</p>
+                  )}
+                </div>
               {/* Phone Number */}
               <div className="form-field">
                 <label htmlFor="phone" className="field-label">
-                  Phone Number <span className="required">*</span>
+                  Phone Number
                 </label>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   {COUNTRY_CODES[formData.country] && (
@@ -322,6 +344,8 @@ const LeadForm = ({ assessmentType, industry, onSubmit }) => {
                   <p className="field-error">{errors.phone}</p>
                 )}
               </div>
+              </div>
+              
             </div>
           </div>
 
@@ -398,28 +422,7 @@ const LeadForm = ({ assessmentType, industry, onSubmit }) => {
                   )}
                 </div>
                 
-                {/* Country */}
-                <div className="form-field">
-                  <label htmlFor="country" className="field-label">
-                    Country <span className="required">*</span>
-                  </label>
-                  <select
-                    id="country"
-                    name="country"
-                    value={formData.country}
-                    onChange={handleChange}
-                    className="field-input"
-                    required
-                  >
-                    <option value="">Select country</option>
-                    {COUNTRIES.map(country => (
-                      <option key={country} value={country}>{country}</option>
-                    ))}
-                  </select>
-                  {errors.country && (
-                    <p className="field-error">{errors.country}</p>
-                  )}
-                </div>
+                
               </div>
             </div>
           </div>

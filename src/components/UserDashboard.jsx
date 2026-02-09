@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 
@@ -11,6 +12,7 @@ function UserDashboard({ user, onLogout }) {
   const [pagination, setPagination] = useState(null);
   const [selectedAssessment, setSelectedAssessment] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [showFullDetailModal, setShowFullDetailModal] = useState(false);
   const [filterType, setFilterType] = useState('all');
   const [historyLoading, setHistoryLoading] = useState(false);
   const [assessmentTypes, setAssessmentTypes] = useState([]);
@@ -98,7 +100,7 @@ function UserDashboard({ user, onLogout }) {
   const loadAssessmentDetail = async (assessmentId) => {
     try {
       console.log('🔍 Loading assessment details for ID:', assessmentId);
-      const response = await api.get(`/api/assessments/${assessmentId}`);
+      const response = await api.get(`/api/assessments/${assessmentId}?_=${Date.now()}`);
       console.log('📊 Assessment details loaded:', response.data);
       
       if (response.data.success) {
@@ -149,6 +151,54 @@ function UserDashboard({ user, onLogout }) {
     if (trend > 0) return '↑';
     if (trend < 0) return '↓';
     return '→';
+  };
+
+  const capitalizeAssessmentType = (type) => {
+    if (!type) return '';
+    return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+  };
+
+  // Export assessment as PDF
+  const handleExportPDF = async (assessmentId, contactName) => {
+    try {
+      console.log('🔄 Exporting PDF for assessment:', assessmentId);
+      console.log('📍 Using contact name:', contactName);
+      console.log('📍 Full URL:', `/api/lead/assessments/${assessmentId}/export-pdf`);
+      
+      const response = await api.get(`/api/lead/assessments/${assessmentId}/export-pdf`, {
+        responseType: 'blob'
+      });
+
+      console.log('📥 PDF response received:', response);
+      console.log('📥 Response data type:', response.data.type);
+      console.log('📥 Response data size:', response.data.size);
+
+      // Check if response is an error (JSON instead of blob)
+      if (response.data.type === 'application/json') {
+        const text = await response.data.text();
+        const error = JSON.parse(text);
+        throw new Error(error.message || 'Failed to generate PDF');
+      }
+
+      // Create blob and download
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `SAFE-8_Assessment_${contactName.replace(/\s+/g, '_')}_${assessmentId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      console.log('✅ PDF downloaded successfully');
+    } catch (error) {
+      console.error('❌ Error exporting PDF:', error);
+      console.error('❌ Error response:', error.response);
+      console.error('❌ Error data:', error.response?.data);
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to export PDF';
+      alert(`Failed to export PDF: ${errorMessage}\n\nCheck browser console for details.`);
+    }
   };
 
   // Load assessment types for filters
@@ -367,7 +417,7 @@ function UserDashboard({ user, onLogout }) {
                         </td>
                         <td>
                           <span className={`type-badge type-${assessment.assessment_type.toLowerCase()}`}>
-                            {assessment.assessment_type}
+                            {capitalizeAssessmentType(assessment.assessment_type)}
                           </span>
                         </td>
                         <td>{assessment.industry || 'N/A'}</td>
@@ -385,12 +435,22 @@ function UserDashboard({ user, onLogout }) {
                           </span>
                         </td>
                         <td>
-                          <button 
-                            className="btn-view-details"
-                            onClick={() => loadAssessmentDetail(assessment.id)}
-                          >
-                            <i className="fas fa-eye"></i> View
-                          </button>
+                          <div className="action-buttons">
+                            <button 
+                              className="btn-view-details"
+                              onClick={() => loadAssessmentDetail(assessment.id)}
+                              title="View Details"
+                            >
+                              <i className="fas fa-eye"></i> View
+                            </button>
+                            <button 
+                              className="btn-export-pdf"
+                              onClick={() => handleExportPDF(assessment.id, user.contactName || user.contact_name || 'User')}
+                              title="Export PDF"
+                            >
+                              <i className="fas fa-file-pdf"></i> Export
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -411,7 +471,7 @@ function UserDashboard({ user, onLogout }) {
                       <span className="mobile-card-label">Type</span>
                       <span className="mobile-card-value">
                         <span className={`type-badge type-${assessment.assessment_type.toLowerCase()}`}>
-                          {assessment.assessment_type}
+                          {capitalizeAssessmentType(assessment.assessment_type)}
                         </span>
                       </span>
                     </div>
@@ -441,6 +501,12 @@ function UserDashboard({ user, onLogout }) {
                         onClick={() => loadAssessmentDetail(assessment.id)}
                       >
                         <i className="fas fa-eye"></i> View Details
+                      </button>
+                      <button 
+                        className="btn-export-pdf"
+                        onClick={() => handleExportPDF(assessment.id, user.contactName || user.contact_name || 'User')}
+                      >
+                        <i className="fas fa-file-pdf"></i> Export PDF
                       </button>
                     </div>
                   </div>
@@ -480,7 +546,7 @@ function UserDashboard({ user, onLogout }) {
               <div className="modal-header">
                 <div>
                   <h2>Assessment Results</h2>
-                  <p className="modal-subtitle">{selectedAssessment.assessment_type} • {selectedAssessment.industry}</p>
+                  <p className="modal-subtitle">{capitalizeAssessmentType(selectedAssessment.assessment_type)} • {selectedAssessment.industry}</p>
                 </div>
                 <button className="modal-close" onClick={() => setShowDetailModal(false)}>
                   <i className="fas fa-times"></i>
@@ -541,7 +607,7 @@ function UserDashboard({ user, onLogout }) {
                       <i className="fas fa-chart-line"></i>
                       <div>
                         <div className="meta-label">Assessment Type</div>
-                        <div className="meta-value">{selectedAssessment.assessment_type}</div>
+                        <div className="meta-value">{capitalizeAssessmentType(selectedAssessment.assessment_type)}</div>
                       </div>
                     </div>
                     <div className="meta-item">
@@ -715,8 +781,11 @@ function UserDashboard({ user, onLogout }) {
               </div>
               
               <div className="modal-footer">
-                <button className="btn-primary" onClick={() => window.open('mailto:contact@forvismazars.com?subject=AI Strategy Consultation Request', '_blank')}>
-                  <i className="fas fa-calendar-alt"></i> Book Free Consultation
+                <button className="btn-primary" onClick={() => {
+                  setShowDetailModal(false);
+                  setShowFullDetailModal(true);
+                }}>
+                  <i className="fas fa-eye"></i> View Full Details
                 </button>
                 <button className="btn-secondary" onClick={() => setShowDetailModal(false)}>
                   <i className="fas fa-times"></i> Close
@@ -726,10 +795,385 @@ function UserDashboard({ user, onLogout }) {
           </div>
         )}
 
+        {/* Full Assessment Detail Modal */}
+        {showFullDetailModal && selectedAssessment && ReactDOM.createPortal(
+          <AssessmentDetailModal
+            assessment={selectedAssessment}
+            onClose={() => {
+              setShowFullDetailModal(false);
+            }}
+          />,
+          document.body
+        )}
+
       </div>
     </div>
   );
 }
+
+// ========== Assessment Detail Modal Component ==========
+const AssessmentDetailModal = ({ assessment, onClose }) => {
+  const dimensionScores = assessment.dimension_scores ? 
+    (typeof assessment.dimension_scores === 'string' ? JSON.parse(assessment.dimension_scores) : assessment.dimension_scores) 
+    : [];
+  const insights = assessment.insights ? 
+    (typeof assessment.insights === 'string' ? JSON.parse(assessment.insights) : assessment.insights)
+    : {};
+  const responses = assessment.responses ? 
+    (typeof assessment.responses === 'string' ? JSON.parse(assessment.responses) : assessment.responses)
+    : {};
+
+  // Debug logging
+  console.log('🔍 Assessment Detail Modal Data:', {
+    assessmentId: assessment.id,
+    dimensionScoresCount: dimensionScores.length,
+    dimensionScores: dimensionScores,
+    insights: insights,
+    hasGapAnalysis: insights.gap_analysis?.length > 0,
+    hasRecommendations: insights.service_recommendations?.length > 0,
+    responsesCount: Object.keys(responses).length
+  });
+
+  const getScoreCategory = (score) => {
+    if (score >= 80) return { label: 'AI Leader', color: '#28a745' };
+    if (score >= 60) return { label: 'AI Adopter', color: '#ffc107' };
+    if (score >= 40) return { label: 'AI Explorer', color: '#fd7e14' };
+    return { label: 'AI Starter', color: '#dc3545' };
+  };
+
+  const category = getScoreCategory(assessment.overall_score);
+
+  return (
+    <div className="admin-modal-overlay" onClick={onClose}>
+      <div className="admin-modal-content admin-modal-large" onClick={(e) => e.stopPropagation()}>
+        <div className="admin-modal-header">
+          <h2>
+            <i className="fas fa-chart-bar"></i> Assessment Details
+          </h2>
+          <button className="modal-close-btn" onClick={onClose}>
+            <i className="fas fa-times"></i>
+          </button>
+        </div>
+        
+        <div className="admin-modal-body">
+          {/* Assessment Meta Information */}
+          <div className="assessment-detail-meta">
+            <div className="meta-row">
+              <div className="meta-item">
+                <strong><i className="fas fa-clipboard-list"></i> Type:</strong>
+                <span className={`type-badge type-${assessment.assessment_type.toLowerCase()}`}>
+                  {assessment.assessment_type}
+                </span>
+              </div>
+              <div className="meta-item">
+                <strong><i className="fas fa-building"></i> Industry:</strong> {assessment.industry || 'N/A'}
+              </div>
+            </div>
+            <div className="meta-row">
+              <div className="meta-item">
+                <strong><i className="fas fa-calendar"></i> Completed:</strong> 
+                {new Date(assessment.completed_at).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </div>
+              <div className="meta-item">
+                <strong><i className="fas fa-trophy"></i> Category:</strong>
+                <span style={{ 
+                  color: category.color, 
+                  fontWeight: 'bold',
+                  padding: '4px 12px',
+                  background: `${category.color}20`,
+                  borderRadius: '12px',
+                  fontSize: '14px'
+                }}>
+                  {category.label}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Overall Score Card */}
+          <div className="assessment-score-card" style={{
+            background: `linear-gradient(135deg, ${category.color}15 0%, ${category.color}05 100%)`,
+            border: `2px solid ${category.color}`,
+            borderRadius: '16px',
+            padding: '30px',
+            marginBottom: '30px',
+            textAlign: 'center'
+          }}>
+            <h3 style={{ margin: '0 0 15px 0', color: '#333', fontSize: '18px' }}>Overall Score</h3>
+            <div style={{ 
+              fontSize: '64px', 
+              fontWeight: 'bold', 
+              color: category.color,
+              lineHeight: '1',
+              marginBottom: '10px'
+            }}>
+              {assessment.overall_score?.toFixed(1)}%
+            </div>
+            <div style={{
+              fontSize: '16px',
+              color: '#666',
+              marginTop: '10px'
+            }}>
+              {assessment.overall_score >= 80 ? 'Excellent Performance!' :
+               assessment.overall_score >= 60 ? 'Good Progress!' :
+               assessment.overall_score >= 40 ? 'Keep Improving!' : 'Start Your Journey!'}
+            </div>
+          </div>
+
+          {/* Pillar Scores */}
+          {dimensionScores.length > 0 ? (
+            <div className="assessment-pillars" style={{ marginBottom: '30px' }}>
+              <h3 style={{ 
+                color: '#00539F', 
+                marginBottom: '20px',
+                fontSize: '20px',
+                borderBottom: '2px solid #00539F',
+                paddingBottom: '10px'
+              }}>
+                <i className="fas fa-chart-pie"></i> Pillar Performance Breakdown
+              </h3>
+              <div className="pillars-grid">
+                {dimensionScores.map((pillar, idx) => {
+                  const pillarCategory = getScoreCategory(pillar.score);
+                  return (
+                    <div key={idx} className="pillar-card" style={{
+                      border: `2px solid ${pillarCategory.color}30`,
+                      borderRadius: '12px',
+                      padding: '20px',
+                      background: 'white',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                    }}>
+                      <div className="pillar-header" style={{ marginBottom: '15px' }}>
+                        <div className="pillar-name" style={{ 
+                          fontWeight: '600', 
+                          fontSize: '16px',
+                          color: '#333',
+                          marginBottom: '8px'
+                        }}>
+                          {pillar.pillar_name}
+                        </div>
+                        <div className="pillar-short" style={{
+                          fontSize: '12px',
+                          color: '#666',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.5px'
+                        }}>
+                          {pillar.pillar_short_name}
+                        </div>
+                      </div>
+                      <div className="pillar-score" style={{
+                        fontSize: '36px',
+                        fontWeight: 'bold',
+                        color: pillarCategory.color,
+                        marginBottom: '10px'
+                      }}>
+                        {pillar.score?.toFixed(1)}%
+                      </div>
+                      <div className="pillar-bar" style={{
+                        background: '#f0f0f0',
+                        height: '12px',
+                        borderRadius: '6px',
+                        overflow: 'hidden',
+                        marginBottom: '8px'
+                      }}>
+                        <div
+                          className="pillar-bar-fill"
+                          style={{ 
+                            width: `${pillar.score}%`,
+                            height: '100%',
+                            background: `linear-gradient(90deg, ${pillarCategory.color}, ${pillarCategory.color}dd)`,
+                            borderRadius: '6px',
+                            transition: 'width 0.5s ease'
+                          }}
+                        ></div>
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#888', textAlign: 'center' }}>
+                        {pillar.score >= 80 ? '🌟 Excellent' :
+                         pillar.score >= 60 ? '✅ Good' :
+                         pillar.score >= 40 ? '📈 Improving' : '🎯 Needs Focus'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="assessment-pillars" style={{ marginBottom: '30px' }}>
+              <h3 style={{ 
+                color: '#00539F', 
+                marginBottom: '20px',
+                fontSize: '20px',
+                borderBottom: '2px solid #00539F',
+                paddingBottom: '10px'
+              }}>
+                <i className="fas fa-chart-pie"></i> Pillar Performance Breakdown
+              </h3>
+              <div style={{
+                background: '#f0f8ff',
+                border: '1px solid #00539F30',
+                borderRadius: '12px',
+                padding: '30px',
+                textAlign: 'center',
+                color: '#666'
+              }}>
+                <i className="fas fa-info-circle" style={{ fontSize: '48px', color: '#00539F', marginBottom: '15px' }}></i>
+                <p style={{ fontSize: '16px', margin: '0' }}>
+                  Pillar breakdown not available for this assessment. This data is captured in newer assessments for more detailed insights.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Gap Analysis */}
+          {insights.gap_analysis && insights.gap_analysis.length > 0 ? (
+            <div className="assessment-gaps" style={{ marginBottom: '30px' }}>
+              <h3 style={{
+                color: '#E31B23',
+                marginBottom: '15px',
+                fontSize: '20px',
+                borderBottom: '2px solid #E31B23',
+                paddingBottom: '10px'
+              }}>
+                <i className="fas fa-exclamation-triangle"></i> Areas for Improvement
+              </h3>
+              <div style={{
+                background: '#fff5f5',
+                border: '1px solid #E31B2330',
+                borderRadius: '12px',
+                padding: '20px'
+              }}>
+                <ul style={{ margin: 0, paddingLeft: '20px', color: '#555', lineHeight: '1.8' }}>
+                  {insights.gap_analysis.map((gap, idx) => (
+                    <li key={idx} style={{ marginBottom: '10px' }}>
+                      <strong style={{ color: '#E31B23' }}>•</strong> {gap}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : (
+            <div className="assessment-gaps" style={{ marginBottom: '30px' }}>
+              <h3 style={{
+                color: '#E31B23',
+                marginBottom: '15px',
+                fontSize: '20px',
+                borderBottom: '2px solid #E31B23',
+                paddingBottom: '10px'
+              }}>
+                <i className="fas fa-exclamation-triangle"></i> Areas for Improvement
+              </h3>
+              <div style={{
+                background: '#fff5f5',
+                border: '1px solid #E31B2330',
+                borderRadius: '12px',
+                padding: '20px',
+                textAlign: 'center',
+                color: '#999'
+              }}>
+                <p>Detailed analysis not available for this assessment. Please complete a new assessment to receive comprehensive insights.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Service Recommendations */}
+          {insights.service_recommendations && insights.service_recommendations.length > 0 ? (
+            <div className="assessment-recommendations" style={{ marginBottom: '30px' }}>
+              <h3 style={{
+                color: '#F7941D',
+                marginBottom: '15px',
+                fontSize: '20px',
+                borderBottom: '2px solid #F7941D',
+                paddingBottom: '10px'
+              }}>
+                <i className="fas fa-lightbulb"></i> Recommended Services & Next Steps
+              </h3>
+              <div style={{
+                background: '#fffbf0',
+                border: '1px solid #F7941D30',
+                borderRadius: '12px',
+                padding: '20px'
+              }}>
+                <ul style={{ margin: 0, paddingLeft: '20px', color: '#555', lineHeight: '1.8' }}>
+                  {insights.service_recommendations.map((rec, idx) => (
+                    <li key={idx} style={{ marginBottom: '10px' }}>
+                      <strong style={{ color: '#F7941D' }}>💡</strong> {rec}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : (
+            <div className="assessment-recommendations" style={{ marginBottom: '30px' }}>
+              <h3 style={{
+                color: '#F7941D',
+                marginBottom: '15px',
+                fontSize: '20px',
+                borderBottom: '2px solid #F7941D',
+                paddingBottom: '10px'
+              }}>
+                <i className="fas fa-lightbulb"></i> Recommended Services & Next Steps
+              </h3>
+              <div style={{
+                background: '#fffbf0',
+                border: '1px solid #F7941D30',
+                borderRadius: '12px',
+                padding: '20px',
+                textAlign: 'center',
+                color: '#999'
+              }}>
+                <p>Personalized recommendations not available for this assessment. Please complete a new assessment to receive tailored advice.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Additional Metadata */}
+          {insights.metadata && (
+            <div className="assessment-metadata" style={{
+              background: '#f8f9fa',
+              borderRadius: '12px',
+              padding: '20px',
+              marginTop: '20px'
+            }}>
+              <h4 style={{ margin: '0 0 15px 0', color: '#666', fontSize: '16px' }}>
+                <i className="fas fa-info-circle"></i> Additional Information
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
+                {insights.completion_time_ms && (
+                  <div>
+                    <strong style={{ color: '#888', fontSize: '13px' }}>Completion Time:</strong>
+                    <div style={{ color: '#333', fontSize: '16px' }}>
+                      {(insights.completion_time_ms / 60000).toFixed(1)} minutes
+                    </div>
+                  </div>
+                )}
+                {Object.keys(responses).length > 0 && (
+                  <div>
+                    <strong style={{ color: '#888', fontSize: '13px' }}>Total Responses:</strong>
+                    <div style={{ color: '#333', fontSize: '16px' }}>
+                      {Object.keys(responses).length} questions answered
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="modal-actions">
+          <button onClick={onClose} className="btn-primary">
+            <i className="fas fa-check"></i> Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 
 

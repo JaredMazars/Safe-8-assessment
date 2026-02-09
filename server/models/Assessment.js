@@ -295,7 +295,10 @@ class Assessment {
     try {
       const result = await database.query(sql, [lead_user_id, assessment_type.toUpperCase()]);
       
-      const dimensionScores = result.map(pillar => ({
+      // database.query returns full result object when params are used
+      const resultSet = result.recordset || result;
+      
+      const dimensionScores = resultSet.map(pillar => ({
         pillar_name: pillar.pillar_name,
         pillar_short_name: pillar.pillar_short_name,
         total_questions: pillar.total_questions,
@@ -334,7 +337,10 @@ class Assessment {
     try {
       const result = await database.query(sql, [assessment_type.toUpperCase()]);
       
-      if (result.length === 0) {
+      // database.query returns full result object when params are used
+      const resultSet = result.recordset || result;
+      
+      if (resultSet.length === 0) {
         // No custom weights - use equal distribution
         const pillarsSql = `
           SELECT pillar_short_name, default_weight
@@ -343,8 +349,10 @@ class Assessment {
         `;
         const pillarsResult = await database.query(pillarsSql, [assessment_type.toUpperCase()]);
         
+        const pillarsResultSet = pillarsResult.recordset || pillarsResult;
+        
         const weights = {};
-        pillarsResult.forEach(p => {
+        pillarsResultSet.forEach(p => {
           weights[p.pillar_short_name] = p.default_weight || 12.5;
         });
         return weights;
@@ -352,7 +360,7 @@ class Assessment {
 
       // Return custom weights
       const weights = {};
-      result.forEach(row => {
+      resultSet.forEach(row => {
         weights[row.pillar_short_name] = parseFloat(row.weight_percentage);
       });
       return weights;

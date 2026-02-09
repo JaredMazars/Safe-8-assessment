@@ -8,6 +8,9 @@ import cache from '../config/simpleCache.js';
 import { validateAdminLogin, validatePasswordChange, validateId, validatePagination } from '../middleware/validation.js';
 import { doubleCsrfProtection } from '../middleware/csrf.js';
 import emailService from '../services/emailService.js';
+import { generateAssessmentPDFBuffer } from '../services/pdfService.js';
+import { generateITACReviewPDFBuffer } from '../services/itacReviewPdfService.js';
+import { generateAppDocumentationPDFBuffer } from '../services/appDocumentationPdfService.js';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 
@@ -1900,6 +1903,101 @@ router.get('/assessments', authenticateAdmin, async (req, res) => {
   }
 });
 
+// Export assessment as PDF
+router.get('/assessments/:assessmentId/export-pdf', authenticateAdmin, async (req, res) => {
+  try {
+    const { assessmentId } = req.params;
+    const id = parseInt(assessmentId);
+
+    // Get assessment with user details
+    const sql = `
+      SELECT 
+        a.*,
+        l.contact_name,
+        l.email,
+        l.company_name,
+        l.job_title
+      FROM assessments a
+      LEFT JOIN leads l ON a.lead_id = l.id
+      WHERE a.id = @param1
+    `;
+    
+    const result = await database.query(sql, [id]);
+    const assessment = Array.isArray(result) ? result[0] : result.recordset[0];
+    
+    if (!assessment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Assessment not found'
+      });
+    }
+
+    // Prepare user data
+    const userData = {
+      contact_name: assessment.contact_name,
+      email: assessment.email,
+      company_name: assessment.company_name,
+      job_title: assessment.job_title
+    };
+
+    // Prepare assessment data - with enhanced error handling
+    let dimension_scores_parsed = [];
+    if (assessment.dimension_scores) {
+      if (typeof assessment.dimension_scores === 'string') {
+        try {
+          dimension_scores_parsed = JSON.parse(assessment.dimension_scores);
+        } catch (e) {
+          console.error('Failed to parse dimension_scores', e.message);
+        }
+      } else if (Array.isArray(assessment.dimension_scores)) {
+        dimension_scores_parsed = assessment.dimension_scores;
+      }
+    }
+
+    let insights_parsed = {};
+    if (assessment.insights) {
+      if (typeof assessment.insights === 'string') {
+        try {
+          insights_parsed = JSON.parse(assessment.insights);
+        } catch (e) {
+          console.error('Failed to parse insights', e.message);
+        }
+      } else if (typeof assessment.insights === 'object') {
+        insights_parsed = assessment.insights;
+      }
+    }
+
+    const assessmentData = {
+      overall_score: parseFloat(assessment.overall_score),
+      dimension_scores: dimension_scores_parsed,
+      insights: insights_parsed,
+      assessment_type: assessment.assessment_type || 'GENERAL',
+      completed_at: assessment.completed_at || new Date()
+    };
+
+    // Generate PDF buffer
+    const pdfBuffer = await generateAssessmentPDFBuffer(userData, assessmentData);
+
+    // Set headers for PDF download
+    const filename = `SAFE-8_Assessment_${assessment.contact_name.replace(/\s+/g, '_')}_${assessmentId}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    console.log('✅ Generated PDF export for assessment:', assessmentId);
+
+    // Send PDF buffer
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('❌ Error exporting assessment PDF:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting assessment PDF',
+      error: error.message
+    });
+  }
+});
+
 // Get single assessment by ID
 router.get('/assessments/:assessmentId', authenticateAdmin, async (req, res) => {
   try {
@@ -3211,6 +3309,68 @@ router.delete('/config/pillars/:pillarId', authenticateAdmin, async (req, res) =
     res.status(500).json({
       success: false,
       message: 'Error deleting pillar'
+    });
+  }
+});
+
+/**
+ * Generate ITAC Review PDF
+ */
+router.post('/itac-review/generate-pdf', async (req, res) => {
+  try {
+    const formData = req.body;
+
+    console.log('📄 Generating ITAC Review PDF...');
+
+    // Generate PDF buffer
+    const pdfBuffer = await generateITACReviewPDFBuffer(formData);
+
+    // Set response headers for PDF download
+    const filename = `ITAC_Review_${formData.toolName?.replace(/[^a-z0-9]/gi, '_') || 'Document'}_${new Date().toISOString().split('T')[0]}.pdf`;
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    res.send(pdfBuffer);
+
+    console.log('✅ ITAC Review PDF generated and sent successfully');
+  } catch (error) {
+    console.error('❌ Error generating ITAC Review PDF:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error generating ITAC Review PDF',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Generate Application Documentation PDF
+ */
+router.get('/documentation/generate-pdf', async (req, res) => {
+  try {
+    console.log('📄 Generating SAFE-8 Application Documentation PDF...');
+
+    // Generate PDF buffer
+    const pdfBuffer = await generateAppDocumentationPDFBuffer();
+
+    // Set response headers for PDF download
+    const filename = `SAFE8_Documentation_${new Date().toISOString().split('T')[0]}.pdf`;
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    res.send(pdfBuffer);
+
+    console.log('✅ Application Documentation PDF generated and sent successfully');
+  } catch (error) {
+    console.error('❌ Error generating Application Documentation PDF:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error generating Application Documentation PDF',
+      error: error.message
     });
   }
 });

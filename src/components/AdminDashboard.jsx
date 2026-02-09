@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { COMPANY_SIZES, COUNTRIES } from '../config/api';
 import { COUNTRY_CODES, validatePhoneNumber, formatPhoneNumber, parsePhoneNumber } from '../config/countryCodes';
+// import ITACReviewForm from './ITACReviewForm';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -80,6 +81,9 @@ const AdminDashboard = () => {
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [selectedAdmin, setSelectedAdmin] = useState(null);
   const [adminModalMode, setAdminModalMode] = useState('create');
+
+  // ITAC Review Form
+  // const [showITACReviewForm, setShowITACReviewForm] = useState(false);
 
   const ACTION_TYPES = ['CREATE', 'UPDATE', 'DELETE', 'VIEW', 'LOGIN', 'ASSESSMENT_START', 'ASSESSMENT_COMPLETE', 'ASSESSMENT_UPDATE'];
   const ENTITY_TYPES = ['admin', 'user', 'question', 'assessment'];
@@ -470,6 +474,32 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleExportAssessmentPDF = async (assessmentId, userName) => {
+    try {
+      console.log('📄 Exporting assessment PDF:', assessmentId);
+      
+      const response = await api.get(`/api/admin/assessments/${assessmentId}/export-pdf`, {
+        responseType: 'blob'
+      });
+
+      // Create blob and download
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `SAFE-8_Assessment_${userName.replace(/\s+/g, '_')}_${assessmentId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      console.log('✅ PDF exported successfully');
+    } catch (err) {
+      console.error('❌ Error exporting PDF:', err);
+      alert('Failed to export PDF: ' + (err.response?.data?.message || err.message));
+    }
+  };
+
   // ========== Activity Logs ==========
   const loadActivityLogs = async (page = 1) => {
     try {
@@ -827,9 +857,7 @@ const AdminDashboard = () => {
               </div>
             </div>
             <div className="admin-header-right">
-              <button onClick={() => navigate('/')} className="btn-back-home">
-                <i className="fas fa-home"></i> Back to Home
-              </button>
+              
               <div className="admin-user-info">
                 <i className="fas fa-user-shield"></i>
                 <div>
@@ -837,6 +865,12 @@ const AdminDashboard = () => {
                   <div className="admin-user-role">{adminUser?.role}</div>
                 </div>
               </div>
+              {/* <button onClick={() => setShowITACReviewForm(true)} className="btn-itac-review">
+                <i className="fas fa-file-contract"></i> ITAC Review
+              </button> */}
+              <button onClick={() => navigate('/')} className="btn-back-home">
+                <i className="fas fa-home"></i> Back to Home
+              </button>
               <button onClick={handleLogout} className="btn-logout">
                 <i className="fas fa-sign-out-alt"></i> Logout
               </button>
@@ -1423,6 +1457,14 @@ const AdminDashboard = () => {
                                     <span>View</span>
                                   </button>
                                   <button
+                                    onClick={() => handleExportAssessmentPDF(assessment.id, assessment.user_name)}
+                                    className="btn-action btn-export"
+                                    title="Export as PDF"
+                                  >
+                                    <i className="fas fa-file-pdf"></i>
+                                    <span>Export</span>
+                                  </button>
+                                  <button
                                     onClick={() => handleDeleteAssessment(assessment.id)}
                                     className="btn-action btn-delete"
                                     title="Delete assessment"
@@ -1512,7 +1554,7 @@ const AdminDashboard = () => {
                           <th>Action</th>
                           <th>Entity</th>
                           <th>Description</th>
-                          <th>IP Address</th>
+                          {/* <th>IP Address</th> */}
                         </tr>
                       </thead>
                       <tbody>
@@ -1548,7 +1590,7 @@ const AdminDashboard = () => {
                                 <span className="entity-badge">{log.entity_type}</span>
                               </td>
                               <td className="description-cell">{log.description}</td>
-                              <td>{log.ip_address || 'N/A'}</td>
+                              {/* <td>{log.ip_address || 'N/A'}</td> */}
                             </tr>
                           ))
                         )}
@@ -2175,6 +2217,7 @@ const AdminDashboard = () => {
             setUserAssessments([]);
           }}
           onViewDetails={handleViewAssessment}
+          onExportPDF={handleExportAssessmentPDF}
         />,
         document.body
       )}
@@ -2205,11 +2248,19 @@ const AdminDashboard = () => {
           assessment={selectedAssessment}
           onClose={() => {
             setShowAssessmentModal(false);
-            setSelectedAssessment(null);
+            setSelectedAssessment(null);  
           }}
         />,
         document.body
       )}
+
+      {/* ITAC Review Form */}
+      {/* {showITACReviewForm && ReactDOM.createPortal(
+        <ITACReviewForm
+          onClose={() => setShowITACReviewForm(false)}
+        />,
+        document.body
+      )} */}
     </div>
   );
 };
@@ -2874,7 +2925,7 @@ const UserModal = ({ mode, user, onClose, onSuccess, industries }) => {
 };
 
 // ========== User Assessments Modal Component ==========
-const UserAssessmentsModal = ({ user, assessments, loading, onClose, onViewDetails }) => {
+const UserAssessmentsModal = ({ user, assessments, loading, onClose, onViewDetails, onExportPDF }) => {
   console.log('🎨 UserAssessmentsModal rendering:', {
     userName: user?.full_name,
     userEmail: user?.email,
@@ -3020,6 +3071,13 @@ const UserAssessmentsModal = ({ user, assessments, loading, onClose, onViewDetai
                       className="btn-secondary btn-sm"
                     >
                       <i className="fas fa-eye"></i> View Full Details
+                    </button>
+                    <button
+                      onClick={() => onExportPDF(assessment.id, user.full_name)}
+                      className="btn-primary btn-sm"
+                      style={{ marginLeft: '10px' }}
+                    >
+                      <i className="fas fa-file-pdf"></i> Export PDF
                     </button>
                   </div>
                 </div>

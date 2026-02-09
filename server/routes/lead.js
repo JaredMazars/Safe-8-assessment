@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import Lead from '../models/Lead.js';
+import Assessment from '../models/Assessment.js';
 import UserActivity from '../models/UserActivity.js';
 import database from '../config/database.js';
 import { validateLeadForm, validateLeadLogin } from '../middleware/validation.js';
-import { sendWelcomeEmail, sendPasswordResetEmail } from '../services/emailService.js';
+import { sendWelcomeEmail, sendPasswordResetEmail, sendAssessmentResults } from '../services/emailService.js';
+import { generateAssessmentPDFBuffer } from '../services/pdfService.js';
 import rateLimit from 'express-rate-limit';
 import logger from '../utils/logger.js';
 import { doubleCsrfProtection } from '../middleware/csrf.js';
@@ -187,6 +189,30 @@ leadRouter.post('/submit-assessment', async (req, res) => {
 
     logger.info('Lead verified', { contactName: leadExists.contact_name });
 
+    // Generate insights using Assessment model
+    const generatedInsights = Assessment.generateInsights(
+      overall_score,
+      pillar_scores || [],
+      assessment_type
+    );
+
+    // Convert insights to match PDF expectations
+    const gap_analysis_items = [
+      ...(generatedInsights.improvement_areas || []).map(area => 
+        `${area.area} (${area.score.toFixed(1)}%): ${area.description}`
+      ),
+      ...(generatedInsights.critical_impact_areas || []).map(area => 
+        `Critical: ${area.area} - Score: ${area.score.toFixed(1)}%, Weight: ${area.weight}% - ${area.description}`
+      )
+    ];
+
+    const service_recommendations_items = [
+      ...(generatedInsights.recommendations || []),
+      ...(generatedInsights.weighted_priorities || []).map(priority =>
+        `Priority ${priority.priority}: Improve ${priority.area} (current: ${priority.score.toFixed(1)}%, weight: ${priority.weight}%)`
+      )
+    ];
+
     // Prepare data for insertion
     const dimension_scores = JSON.stringify(pillar_scores || []);
     const responses_json = JSON.stringify(responses || {});
@@ -197,9 +223,13 @@ leadRouter.post('/submit-assessment', async (req, res) => {
       completion_date: new Date().toISOString(),
       total_score: overall_score,
       completion_time_ms: completion_time_ms || 0,
-      risk_assessment: risk_assessment || [],
-      service_recommendations: service_recommendations || [],
-      gap_analysis: gap_analysis || [],
+      overall_assessment: generatedInsights.overall_assessment,
+      strengths: generatedInsights.strengths || [],
+      improvement_areas: generatedInsights.improvement_areas || [],
+      weighted_priorities: generatedInsights.weighted_priorities || [],
+      critical_impact_areas: generatedInsights.critical_impact_areas || [],
+      gap_analysis: gap_analysis_items,
+      service_recommendations: service_recommendations_items,
       metadata: metadata || {}
     });
 
@@ -349,6 +379,238 @@ leadRouter.post('/login', validateLeadLogin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to log in',
+      error: error.message
+    });
+  }
+});
+
+// Export assessment as PDF (for users to download their own assessments)
+// MUST be before /:leadId route to avoid route matching conflicts
+leadRouter.get('/assessments/:assessmentId/export-pdf', async (req, res) => {
+  try {
+    const { assessmentId } = req.params;
+    const id = parseInt(assessmentId);
+
+    logger.info('PDF export request received', { assessmentId: id });
+
+    // Get assessment with user details
+    const sql = `
+      SELECT 
+        a.*,
+        l.contact_name,
+        l.email,
+        l.company_name,
+        l.job_title
+      FROM assessments a
+      LEFT JOIN leads l ON a.lead_id = l.id
+      WHERE a.id = @param1
+    `;
+    
+    const result = await database.query(sql, [id]);
+    const assessment = Array.isArray(result) ? result[0] : result.recordset[0];
+    
+    if (!assessment) {
+      logger.warn('Assessment not found for PDF export', { assessmentId: id });
+      return res.status(404).json({
+        success: false,
+        message: 'Assessment not found'
+      });
+    }
+
+    logger.info('Assessment found, preparing data', { assessmentId: id });
+
+    // Debug: Log raw database values
+    logger.info('Raw assessment from DB', {
+      id: assessment.id,
+      dimension_scores_type: typeof assessment.dimension_scores,
+      dimension_scores_value: assessment.dimension_scores ? String(assessment.dimension_scores).substring(0, 100) : 'NULL',
+      insights_type: typeof assessment.insights,
+      insights_value: assessment.insights ? String(assessment.insights).substring(0, 100) : 'NULL'
+    });
+
+    // Prepare user data
+    const userData = {
+      contact_name: assessment.contact_name,
+      email: assessment.email,
+      company_name: assessment.company_name,
+      job_title: assessment.job_title
+    };
+
+    // Prepare assessment data - with better error handling
+    let dimension_scores_parsed = [];
+    if (assessment.dimension_scores) {
+      if (typeof assessment.dimension_scores === 'string') {
+        try {
+          dimension_scores_parsed = JSON.parse(assessment.dimension_scores);
+        } catch (e) {
+          logger.error('Failed to parse dimension_scores', { error: e.message });
+        }
+      } else if (Array.isArray(assessment.dimension_scores)) {
+        dimension_scores_parsed = assessment.dimension_scores;
+      }
+    }
+
+    let insights_parsed = {};
+    if (assessment.insights) {
+      if (typeof assessment.insights === 'string') {
+        try {
+          insights_parsed = JSON.parse(assessment.insights);
+        } catch (e) {
+          logger.error('Failed to parse insights', { error: e.message });
+        }
+      } else if (typeof assessment.insights === 'object') {
+        insights_parsed = assessment.insights;
+      }
+    }
+
+    const assessmentData = {
+      overall_score: parseFloat(assessment.overall_score),
+      dimension_scores: dimension_scores_parsed,
+      insights: insights_parsed,
+      assessment_type: assessment.assessment_type || 'GENERAL',
+      completed_at: assessment.completed_at || new Date()
+    };
+
+    logger.info('Assessment data prepared for PDF', { 
+      assessmentId: id,
+      overallScore: assessmentData.overall_score,
+      dimensionScoresCount: assessmentData.dimension_scores?.length || 0,
+      dimensionScores: assessmentData.dimension_scores,
+      hasInsights: !!assessmentData.insights
+    });
+
+    logger.info('Generating PDF buffer', { assessmentId: id });
+
+    // Generate PDF buffer
+    const pdfBuffer = await generateAssessmentPDFBuffer(userData, assessmentData);
+
+    logger.info('PDF generated successfully', { assessmentId: id, bufferSize: pdfBuffer.length });
+
+    // Set headers for PDF download
+    const filename = `SAFE-8_Assessment_${assessment.contact_name.replace(/\s+/g, '_')}_${assessmentId}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    // Send PDF buffer
+    res.send(pdfBuffer);
+  } catch (error) {
+    logger.error('Error exporting assessment PDF', { 
+      error: error.message, 
+      stack: error.stack,
+      assessmentId: req.params.assessmentId 
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting assessment PDF',
+      error: error.message
+    });
+  }
+});
+
+// Email assessment results (for users to send their results via email)
+leadRouter.post('/assessments/:assessmentId/email-results', async (req, res) => {
+  try {
+    const { assessmentId } = req.params;
+    const { email } = req.body;
+    const id = parseInt(assessmentId);
+
+    logger.info('Email results request received', { assessmentId: id, email });
+
+    // Get assessment with user details
+    const sql = `
+      SELECT 
+        a.*,
+        l.contact_name,
+        l.email,
+        l.company_name,
+        l.job_title
+      FROM assessments a
+      LEFT JOIN leads l ON a.lead_id = l.id
+      WHERE a.id = @param1
+    `;
+    
+    const result = await database.query(sql, [id]);
+    const assessment = Array.isArray(result) ? result[0] : result.recordset[0];
+    
+    if (!assessment) {
+      logger.warn('Assessment not found for email', { assessmentId: id });
+      return res.status(404).json({
+        success: false,
+        message: 'Assessment not found'
+      });
+    }
+
+    // Prepare user data
+    const userData = {
+      contact_name: assessment.contact_name,
+      email: email || assessment.email,
+      company_name: assessment.company_name,
+      job_title: assessment.job_title
+    };
+
+    // Prepare assessment data - with enhanced error handling
+    let dimension_scores_parsed = [];
+    if (assessment.dimension_scores) {
+      if (typeof assessment.dimension_scores === 'string') {
+        try {
+          dimension_scores_parsed = JSON.parse(assessment.dimension_scores);
+        } catch (e) {
+          logger.error('Failed to parse dimension_scores', { error: e.message });
+        }
+      } else if (Array.isArray(assessment.dimension_scores)) {
+        dimension_scores_parsed = assessment.dimension_scores;
+      }
+    }
+
+    let insights_parsed = {};
+    if (assessment.insights) {
+      if (typeof assessment.insights === 'string') {
+        try {
+          insights_parsed = JSON.parse(assessment.insights);
+        } catch (e) {
+          logger.error('Failed to parse insights', { error: e.message });
+        }
+      } else if (typeof assessment.insights === 'object') {
+        insights_parsed = assessment.insights;
+      }
+    }
+
+    const assessmentData = {
+      overall_score: parseFloat(assessment.overall_score),
+      dimension_scores: dimension_scores_parsed,
+      insights: insights_parsed,
+      assessment_type: assessment.assessment_type || 'GENERAL',
+      completed_at: assessment.completed_at || new Date()
+    };
+
+    logger.info('Sending email with assessment results', { assessmentId: id, email: userData.email });
+
+    // Send email using the email service
+    const emailResult = await sendAssessmentResults(userData, assessmentData);
+
+    if (emailResult.success) {
+      logger.info('Email sent successfully', { assessmentId: id });
+      res.json({
+        success: true,
+        message: 'Assessment results sent to your email successfully'
+      });
+    } else {
+      logger.error('Failed to send email', { error: emailResult.error });
+      res.status(500).json({
+        success: false,
+        message: 'Failed to send email: ' + emailResult.error
+      });
+    }
+  } catch (error) {
+    logger.error('Error sending assessment results email', { 
+      error: error.message, 
+      stack: error.stack,
+      assessmentId: req.params.assessmentId 
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Error sending email',
       error: error.message
     });
   }

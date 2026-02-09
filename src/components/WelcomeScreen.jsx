@@ -20,6 +20,16 @@ const WelcomeScreen = ({
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [assessmentCards, setAssessmentCards] = useState([]);
   const [loadingCards, setLoadingCards] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Check if admin is logged in
+  useEffect(() => {
+    const adminToken = localStorage.getItem('adminToken');
+    const adminUser = localStorage.getItem('adminUser');
+    if (adminToken && adminUser) {
+      setIsAdmin(true);
+    }
+  }, []);
 
   // Default fallback cards - ALWAYS shown
   const defaultCards = [
@@ -69,16 +79,11 @@ const WelcomeScreen = ({
   useEffect(() => {
     const fetchAssessmentCards = async () => {
       try {
-        const response = await api.get('/api/questions/assessment-types-config');
+        // Add cache-busting timestamp to force fresh data
+        const response = await api.get(`/api/questions/assessment-types-config?_=${Date.now()}`);
         if (response.data.success && response.data.configs && response.data.configs.length > 0) {
-          // Filter out the default types and add any new custom types
-          const defaultTypes = ['core', 'advanced', 'frontier', 'test'];
-          const customCards = response.data.configs.filter(
-            card => !defaultTypes.includes(card.type.toLowerCase())
-          );
-          
-          // Always use hardcoded defaults + append custom cards
-          setAssessmentCards([...defaultCards, ...customCards]);
+          // Use configs from API - backend already has the correct styling and respects is_active flag
+          setAssessmentCards(response.data.configs);
         } else {
           // Use default cards if no configs found
           setAssessmentCards(defaultCards);
@@ -214,7 +219,15 @@ const WelcomeScreen = ({
             className="welcome-logo"
           />
           <div className="header-actions">
-            {userData ? (
+            {isAdmin ? (
+              <button
+                onClick={() => navigate('/admin/dashboard')}
+                className="btn-view-dashboard"
+              >
+                <i className="fas fa-shield-alt"></i>
+                Admin Dashboard
+              </button>
+            ) : userData ? (
               <div className="user-info-banner">
                 <i className="fas fa-user-circle"></i>
                 <div className="user-info-text">

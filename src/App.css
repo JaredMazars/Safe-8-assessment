@@ -2362,16 +2362,18 @@ select.field-input {
   opacity: 0.9;
 }
 
+
 .meta-label {
-  font-weight: 600;
+  font-weight: 300;
+  opacity: 0.95;
   margin-right: 0.25rem;
-  color: var(--white);
+  color: #333;
 }
 
 .meta-value {
   font-weight: 400;
   text-transform: capitalize;
-  color: var(--white);
+  color: #333;
 }
 
 /* Score Card */
@@ -2860,8 +2862,18 @@ select.field-input {
 /* Results Actions */
 .results-actions {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
   padding: 1.5rem 2rem;
+  gap: 1rem;
+}
+
+.action-buttons-group {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .btn-restart {
@@ -3365,7 +3377,8 @@ select.field-input {
 
 .score-label {
   font-size: 0.75rem;
-  color: var(--white);
+  color: #666;
+  font-weight: 500;
 }
 
 .status-badge {
@@ -3383,10 +3396,15 @@ select.field-input {
   color: #1b5e20;
 }
 
-.btn-view-details {
+.action-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn-view-details,
+.btn-export-pdf {
   padding: 0.5rem 1rem;
-  background: var(--secondary-blue);
-  color: var(--white);
   border: none;
   border-radius: 6px;
   font-size: 0.875rem;
@@ -3398,10 +3416,26 @@ select.field-input {
   transition: all 0.2s;
 }
 
+.btn-view-details {
+  background: var(--secondary-blue);
+  color: var(--white);
+}
+
 .btn-view-details:hover {
   background: var(--primary-blue);
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 102, 204, 0.3);
+}
+
+.btn-export-pdf {
+  background: #E31B23;
+  color: var(--white);
+}
+
+.btn-export-pdf:hover {
+  background: #c41820;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(227, 27, 35, 0.3);
 }
 
 /* Mobile Table Cards */
@@ -3854,7 +3888,7 @@ select.field-input {
 .score-label {
   font-size: 0.95rem;
   font-weight: 500;
-  color: var(--white);
+  color: var(--fm-gray);
   margin-bottom: 0.5rem;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -3995,7 +4029,19 @@ select.field-input {
 }
 
 .meta-label {
+  font-weight: 300;
   font-size: 0.8rem;
+  opacity: 0.95;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.25rem;
+}
+
+.meta-label-result{
+  font-weight: 300;
+  font-size: 0.8rem;
+  opacity: 0.95;
   color: var(--white);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -4003,6 +4049,12 @@ select.field-input {
 }
 
 .meta-value {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.meta-value-result{
   font-size: 1rem;
   font-weight: 600;
   color: var(--white);
@@ -4373,6 +4425,38 @@ select.field-input {
 }
 
 .btn-back-home i {
+  font-size: 0.875rem;
+}
+
+/* ITAC Review Button */
+.btn-itac-review {
+  background: var(--fm-orange);
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 2px 6px rgba(247, 148, 29, 0.2);
+}
+
+.btn-itac-review:hover {
+  background: #dd8519;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(247, 148, 29, 0.3);
+}
+
+.btn-itac-review:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(247, 148, 29, 0.2);
+}
+
+.btn-itac-review i {
   font-size: 0.875rem;
 }
 
@@ -5017,6 +5101,18 @@ select.field-input {
   background: #e07000;
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(247, 148, 29, 0.3);
+}
+
+.btn-export {
+  background: #28a745;
+  color: var(--white);
+  box-shadow: 0 2px 4px rgba(40, 167, 69, 0.15);
+}
+
+.btn-export:hover {
+  background: #218838;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
 }
 
 .btn-delete {
@@ -6184,5 +6280,51 @@ select.field-input {
     font-size: 1rem;
   }
 
+}
+
+/* Print Styles */
+@media print {
+  /* Hide elements that shouldn't be printed */
+  .results-actions,
+  .btn-restart,
+  .btn-primary,
+  .btn-secondary,
+  .action-buttons-group,
+  button {
+    display: none !important;
+  }
+
+  /* Ensure content fits on page */
+  .results-container {
+    max-width: 100%;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Remove backgrounds and shadows for printing */
+  .results-card,
+  .insight-card,
+  .recommendation-card,
+  .key-takeaway-card {
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
+
+  /* Ensure charts print well */
+  canvas {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  /* Page breaks */
+  .cta-section {
+    page-break-before: always;
+  }
+
+  /* Print-friendly colors */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 }
 

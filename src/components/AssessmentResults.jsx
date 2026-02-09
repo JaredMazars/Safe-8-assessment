@@ -33,6 +33,8 @@ const AssessmentResults = ({
   const [dimensionScores, setDimensionScores] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [userAssessments, setUserAssessments] = useState([]);
+  const [globalAverage, setGlobalAverage] = useState(77.9); // Default fallback
   const { score } = results || { score: 0 };
 
   // Load dimension scores from assessment results
@@ -41,19 +43,47 @@ const AssessmentResults = ({
       try {
         setIsLoading(true);
         
+        // Load global average score for industry benchmark
+        try {
+          const avgResponse = await api.get('/api/assessment/global-average');
+          console.log('🌍 Global Average API Response:', avgResponse.data);
+          if (avgResponse.data.success && avgResponse.data.average) {
+            console.log('✅ Setting global average to:', avgResponse.data.average);
+            setGlobalAverage(avgResponse.data.average);
+          } else {
+            console.log('⚠️ API returned success=false or no average, using default 77.9%');
+          }
+        } catch (err) {
+          console.log('❌ Could not load global average, using default 77.9%:', err.message);
+        }
+        
+        // Load user's assessment history to calculate average
+        if (userId) {
+          try {
+            const historyResponse = await api.get(`/api/assessments/user/${userId}/history`);
+            if (historyResponse.data.assessments) {
+              setUserAssessments(historyResponse.data.assessments);
+            }
+          } catch (err) {
+            console.log('Could not load assessment history');
+          }
+        }
+        
         // Try to get dimension scores from backend
         if (userId && assessmentType) {
           try {
             const response = await api.get(`/api/assessment/current/${userId}/${assessmentType}`);
             
-            if (response.data.success && response.data.dimension_scores) {
-              setDimensionScores(response.data.dimension_scores);
+            if (response.data.success && response.data.data && response.data.data.dimension_scores) {
+              console.log('✅ Loaded dimension scores from backend:', response.data.data.dimension_scores.length, 'pillars');
+              setDimensionScores(response.data.data.dimension_scores);
             } else {
+              console.log('⚠️ No dimension scores in API response, falling back to simulated');
               // Generate simulated dimension scores based on overall score
               generateSimulatedScores();
             }
           } catch (apiError) {
-            console.log('API not available, using simulated scores');
+            console.log('❌ API error, using simulated scores:', apiError.message);
             generateSimulatedScores();
           }
         } else {
@@ -85,14 +115,87 @@ const AssessmentResults = ({
     loadDimensionScores();
   }, [userId, assessmentType, score]);
 
+  // Log when global average changes
+  useEffect(() => {
+    console.log('📊 Global Average State Updated:', globalAverage);
+  }, [globalAverage]);
+
+  // Handler functions for export, email, and print
+  const handleExportPDF = async () => {
+    if (!results?.assessmentId) {
+      alert('Assessment ID not available. Please try again.');
+      return;
+    }
+
+    try {
+      console.log('🔄 Exporting PDF for assessment:', results.assessmentId);
+      
+      const response = await api.get(`/api/lead/assessments/${results.assessmentId}/export-pdf`, {
+        responseType: 'blob'
+      });
+
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `SAFE-8_Assessment_Results_${results.assessmentId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      console.log('✅ PDF downloaded successfully');
+    } catch (error) {
+      console.error('❌ Error exporting PDF:', error);
+      alert('Failed to export PDF: ' + (error.response?.data?.message || error.message));
+    }
+  };
+
+  const handleEmailResults = async () => {
+    if (!results?.assessmentId) {
+      alert('Assessment ID not available. Please try again.');
+      return;
+    }
+
+    if (!userData?.email) {
+      alert('Email address not available. Please ensure you are logged in.');
+      return;
+    }
+
+    try {
+      console.log('📧 Sending email for assessment:', results.assessmentId);
+      
+      const response = await api.post(`/api/lead/assessments/${results.assessmentId}/email-results`, {
+        email: userData.email
+      });
+
+      if (response.data.success) {
+        alert('Assessment results have been sent to your email!');
+      } else {
+        alert('Failed to send email: ' + response.data.message);
+      }
+    } catch (error) {
+      console.error('❌ Error sending email:', error);
+      alert('Failed to send email: ' + (error.response?.data?.message || error.message));
+    }
+  };
+
+  const handlePrintResults = async () => {
+    // Download PDF instead of showing print dialog
+    await handleExportPDF();
+  };
+
   // Create radar chart data
   const createRadarChartData = () => {
     const labels = dimensionScores.map(dim => dim.pillar_name || dim.dimension_name);
     const userScores = dimensionScores.map(dim => Math.round(dim.score));
     
-    // Hardcoded benchmark values
-    const avgScore = 60;
+    // Use global average from all assessments
+    const avgScore = Math.round(globalAverage);
+    
     const bestScore = 80;
+
+    console.log("Global Industry Average:", avgScore);
     
     const bestPractice = labels.map(() => bestScore);
     const industryAverage = labels.map(() => avgScore);
@@ -285,13 +388,13 @@ const AssessmentResults = ({
           <div className="results-meta">
             <div className="meta-item">
               <i className="fas fa-industry"></i>
-              <span className="meta-label">Industry:</span>
-              <span className="meta-value">{industry || 'Technology'}</span>
+              <span className="meta-label-result">Industry:</span>
+              <span className="meta-value-result">{industry || 'Technology'}</span>
             </div>
             <div className="meta-item">
               <i className="fas fa-layer-group"></i>
-              <span className="meta-label">Level:</span>
-              <span className="meta-value">{assessmentType?.charAt(0).toUpperCase() + assessmentType?.slice(1)}</span>
+              <span className="meta-label-result">Level:</span>
+              <span className="meta-value-result">{assessmentType?.charAt(0).toUpperCase() + assessmentType?.slice(1)}</span>
             </div>
           </div>
         </div>
@@ -485,19 +588,36 @@ const AssessmentResults = ({
 
         {/* Actions */}
         <div className="results-actions">
-          {userData && (
-            <button className="btn-primary" onClick={() => navigate('/dashboard')} style={{marginRight: '1rem'}}>
-              <i className="fas fa-tachometer-alt"></i>
-              View Dashboard
+          <div className="action-buttons-group">
+            <button className="btn-secondary" onClick={handleExportPDF}>
+              <i className="fas fa-file-pdf"></i>
+              View PDF
             </button>
-          )}
-          <button className="btn-restart" onClick={() => {
-            onRestart();
-            navigate('/');
-          }}>
-            <i className="fas fa-redo"></i>
-            Take Another Assessment
-          </button>
+            <button className="btn-secondary" onClick={handleEmailResults}>
+              <i className="fas fa-envelope"></i>
+              Email Results
+            </button>
+            <button className="btn-secondary" onClick={handlePrintResults}>
+              <i className="fas fa-print"></i>
+              Print Results
+            </button>
+          </div>
+          
+          <div className="action-buttons-group" style={{ marginTop: '1rem' }}>
+            {userData && (
+              <button className="btn-primary" onClick={() => navigate('/dashboard')} style={{marginRight: '1rem'}}>
+                <i className="fas fa-tachometer-alt"></i>
+                View Dashboard
+              </button>
+            )}
+            <button className="btn-restart" onClick={() => {
+              onRestart();
+              navigate('/');
+            }}>
+              <i className="fas fa-redo"></i>
+              Take Another Assessment
+            </button>
+          </div>
         </div>
       </div>
     </div>

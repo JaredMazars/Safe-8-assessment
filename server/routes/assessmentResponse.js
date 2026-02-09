@@ -118,6 +118,25 @@ router.get('/score/:userId/:assessmentType', async (req, res) => {
   }
 });
 
+// Get global average score (for industry benchmark)
+router.get('/global-average', async (req, res) => {
+  try {
+    const result = await AssessmentResponse.getGlobalAverage();
+    
+    res.json({
+      success: true,
+      average: result.average || 0
+    });
+  } catch (error) {
+    console.error('Error getting global average:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get global average',
+      error: error.message
+    });
+  }
+});
+
 // Delete responses (for retaking assessment)
 router.delete('/responses/:userId/:assessmentType?', async (req, res) => {
   try {

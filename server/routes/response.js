@@ -53,17 +53,7 @@ responseRouter.get('/assessment-types-config', async (req, res) => {
       }
     };
 
-    // Always get all types from questions table (source of truth)
-    const questionsSql = `
-      SELECT DISTINCT assessment_type
-      FROM assessment_questions
-      WHERE is_active = 1
-      ORDER BY assessment_type;
-    `;
-    const questionsResult = await database.query(questionsSql);
-    const allTypes = Array.isArray(questionsResult) ? questionsResult : questionsResult?.recordset || [];
-
-    // Check if config table exists
+    // Check if config table exists first
     const tableCheckSql = `
       SELECT COUNT(*) as count
       FROM INFORMATION_SCHEMA.TABLES 
@@ -72,10 +62,11 @@ responseRouter.get('/assessment-types-config', async (req, res) => {
     const tableCheck = await database.query(tableCheckSql);
     const tableExists = (tableCheck?.recordset || tableCheck)[0]?.count > 0;
 
+    let activeTypesFromConfig = [];
     let configMap = {};
 
     if (tableExists) {
-      // Get config data for types that have it
+      // Get ONLY active types from config (this is the source of truth for enabled/disabled)
       const configSql = `
         SELECT 
           assessment_type,
@@ -97,6 +88,7 @@ responseRouter.get('/assessment-types-config', async (req, res) => {
       // Build a map of configs by assessment type
       if (Array.isArray(configs)) {
         configs.forEach(c => {
+          activeTypesFromConfig.push(c.assessment_type);
           configMap[c.assessment_type] = {
             type: c.assessment_type.toLowerCase(),
             title: c.title,
@@ -109,12 +101,21 @@ responseRouter.get('/assessment-types-config', async (req, res) => {
           };
         });
       }
+    } else {
+      // If config table doesn't exist, fall back to questions table
+      const questionsSql = `
+        SELECT DISTINCT assessment_type
+        FROM assessment_questions
+        WHERE is_active = 1
+        ORDER BY assessment_type;
+      `;
+      const questionsResult = await database.query(questionsSql);
+      const allTypes = Array.isArray(questionsResult) ? questionsResult : questionsResult?.recordset || [];
+      activeTypesFromConfig = allTypes.map(t => t.assessment_type);
     }
 
-    // Build final configs array - for each type in questions, use config if available, then default, then generic
-    const finalConfigs = allTypes.map(typeRow => {
-      const type = typeRow.assessment_type;
-      
+    // Build final configs array - ONLY for active types from config
+    const finalConfigs = activeTypesFromConfig.map(type => {
       // Priority: 1. Database config, 2. Hardcoded default, 3. Generic fallback
       return configMap[type] || defaultConfigs[type] || {
         type: type.toLowerCase(),

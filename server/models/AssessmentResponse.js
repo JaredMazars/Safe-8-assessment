@@ -183,6 +183,24 @@ class AssessmentResponse {
       return { success: false, error: error.message };
     }
   }
+
+  // Get global average score across all completed assessments
+  static async getGlobalAverage() {
+    const sql = `SELECT AVG(overall_score) as avg_score FROM assessments WHERE overall_score IS NOT NULL`;
+
+    try {
+      const result = await database.query(sql);
+      const avgScore = Array.isArray(result) ? result[0]?.avg_score : result.recordset[0]?.avg_score;
+      
+      return { 
+        success: true, 
+        average: avgScore ? parseFloat(avgScore.toFixed(1)) : 0
+      };
+    } catch (error) {
+      console.error('Error getting global average:', error);
+      return { success: false, average: 0, error: error.message };
+    }
+  }
 }
 
 export default AssessmentResponse;
