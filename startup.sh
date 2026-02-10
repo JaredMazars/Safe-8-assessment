@@ -40,9 +40,11 @@ echo "Navigating to $SERVER_DIR..."
 cd "$SERVER_DIR"
 
 # Install server dependencies if needed
-if [ ! -d "node_modules" ]; then
+if [ ! -d "node_modules" ] || [ ! -f "node_modules/.package-lock.json" ]; then
     echo "Installing server dependencies..."
-    npm install --production --no-optional
+    npm cache clean --force || true
+    rm -rf node_modules package-lock.json || true
+    npm install --legacy-peer-deps --production=false
 else
     echo "Server dependencies already installed"
 fi
