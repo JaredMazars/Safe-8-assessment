@@ -1,7 +1,7 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy Node.js app to Azure Web App - Safe-8-Assessment
+name: Build and deploy Node.js app to Azure Web App - safe-8-assessment
 
 on:
   push:
@@ -51,15 +51,15 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_C0F923671AE54126B1B989395778318B }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_F1D391528A2A4CF186CB741E803BDDF7 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_50155D62371A493F93CE9D83773E5A6D }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_0BD97F0A0C4C4203BE1A23BFDDA004AF }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_B49B6572C6724F4BB4B49A26609EBB2C }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_00B9B7D56471452CB23F206BB1648B96 }}
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'Safe-8-Assessment'
+          app-name: 'safe-8-assessment'
           slot-name: 'Production'
           package: .
           
