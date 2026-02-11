@@ -21,7 +21,7 @@ jobs:
       - name: Set up Node.js version
         uses: actions/setup-node@v3
         with:
-          node-version: ''24.x''
+          node-version: '24.x'
 
       - name: Clear any cached dependencies
         run: |
@@ -60,10 +60,10 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_1D08BB8E2C2842BDBE53B9DEE42DFC41 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_27AC8A43C9DE4054ABF4C8FCEEC17FFB }}
 
-      - name: ''Deploy to Azure Web App''
+      - name: Deploy to Azure Web App
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ''safe-8''
-          slot-name: ''Production''
+          app-name: safe-8
+          slot-name: Production
           package: .
