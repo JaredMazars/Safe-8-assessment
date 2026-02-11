@@ -5,51 +5,51 @@ echo "=== SAFE-8 Application Startup ==="
 echo "Node version: $(node --version)"
 echo "NPM version: $(npm --version)"
 echo "Current directory: $(pwd)"
-echo "Directory contents:"
-ls -la
 
-# Determine correct path
+# Determine correct path for Azure
 if [ -d "/home/site/wwwroot" ]; then
     WORKDIR="/home/site/wwwroot"
-    echo "Using Azure path: $WORKDIR"
+    echo "✓ Using Azure path: $WORKDIR"
 else
     WORKDIR="."
-    echo "Using current directory: $WORKDIR"
+    echo "✓ Using current directory: $WORKDIR"
 fi
 
 cd "$WORKDIR"
 
-# Build frontend if not already built
+# Check if frontend is already built
 if [ ! -d "dist" ]; then
-    echo "Building frontend..."
-    npm install
+    echo "⚠ Frontend not built - building now..."
+    npm ci --prefer-offline --no-audit
     npm run build
+    echo "✓ Frontend build complete"
 else
-    echo "Frontend already built (dist folder exists)"
+    echo "✓ Frontend already built"
 fi
 
 # Navigate to server directory
 if [ -d "server" ]; then
-    SERVER_DIR="server"
+    echo "✓ Server directory found"
+    cd server
 else
-    echo "Error: Cannot find server directory"
+    echo "❌ Error: Cannot find server directory"
     exit 1
 fi
 
-echo "Navigating to $SERVER_DIR..."
-cd "$SERVER_DIR"
-
-# Install server dependencies if needed
-if [ ! -d "node_modules" ] || [ ! -f "node_modules/.package-lock.json" ]; then
+# Check server dependencies
+if [ ! -d "node_modules" ]; then
     echo "Installing server dependencies..."
-    npm cache clean --force || true
-    rm -rf node_modules package-lock.json || true
-    npm install --legacy-peer-deps --production=false
+    # Use npm ci for cleaner, faster installs
+    npm ci --prefer-offline --no-audit --omit=dev
+    echo "✓ Server dependencies installed"
 else
-    echo "Server dependencies already installed"
+    echo "✓ Server dependencies already installed"
 fi
 
-# Start the application
-echo "Starting Node.js server..."
+# Set environment and start server
+echo "Starting Node.js server in production mode..."
 export NODE_ENV=production
+export PORT=${PORT:-8080}
+
+# Use exec to replace shell process with node
 exec node index.js
