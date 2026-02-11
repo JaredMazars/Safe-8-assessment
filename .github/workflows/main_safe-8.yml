@@ -38,9 +38,6 @@ jobs:
           npm install --production
 
       - name: Deploy to Azure Web App using ZIP
-        env:
-          AZURE_WEBAPP_NAME: safe-8
-          AZURE_CREDENTIALS: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         run: |
           # Create deployment package
           mkdir deploy-package
@@ -49,8 +46,8 @@ jobs:
           zip -r ../deploy.zip .
           cd ..
           
-          # Deploy using Kudu REST API
+          # Deploy using Kudu REST API with correct hostname
           curl -X POST \
             -H "Content-Type: application/zip" \
             --data-binary @deploy.zip \
-            "https://${{ secrets.AZURE_WEBAPP_USERNAME }}:${{ secrets.AZURE_WEBAPP_PASSWORD }}@safe-8.scm.azurewebsites.net/api/zipdeploy"
+            "https://${{ secrets.AZURE_WEBAPP_USERNAME }}:${{ secrets.AZURE_WEBAPP_PASSWORD }}@safe-8-epdybjcfewg2cdcs.scm.westeurope-01.azurewebsites.net/api/zipdeploy"
