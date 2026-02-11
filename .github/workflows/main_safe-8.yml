@@ -1,4 +1,4 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
+﻿# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
 name: Build and deploy Node.js app to Azure Web App - safe-8
@@ -21,13 +21,18 @@ jobs:
       - name: Set up Node.js version
         uses: actions/setup-node@v3
         with:
-          node-version: '24.x'
+          node-version: ''24.x''
 
-      - name: Clean install and build (fix rollup issue)
+      - name: Clear any cached dependencies
         run: |
-          rm -rf node_modules package-lock.json
-          npm install --legacy-peer-deps
-          npm run build --if-present
+          rm -rf node_modules package-lock.json ~/.npm
+          
+      - name: Install dependencies with rollup workaround
+        run: |
+          npm install --legacy-peer-deps --force
+          
+      - name: Build application
+        run: npm run build
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -51,15 +56,14 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_072E18263F1645E69DDD45ED85C37F18 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_421F1FDFA8244D949080A2FF2AB6B47B }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_A1BDF30B15A44972AA332F935D6DE397 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_C8033D0C7AFF4F91902E8CCA9318DAE9 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_1D08BB8E2C2842BDBE53B9DEE42DFC41 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_27AC8A43C9DE4054ABF4C8FCEEC17FFB }}
 
-      - name: 'Deploy to Azure Web App'
+      - name: ''Deploy to Azure Web App''
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'safe-8'
-          slot-name: 'Production'
+          app-name: ''safe-8''
+          slot-name: ''Production''
           package: .
-          
