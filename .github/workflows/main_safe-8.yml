@@ -21,15 +21,13 @@ jobs:
       - name: Set up Node.js version
         uses: actions/setup-node@v3
         with:
-          node-version: '24.x'
+          node-version: '20.x'
 
-      - name: Clear any cached dependencies
+      - name: Clear cache and install with npm ci
         run: |
-          rm -rf node_modules package-lock.json ~/.npm
-          
-      - name: Install dependencies with rollup workaround
-        run: |
-          npm install --legacy-peer-deps --force
+          rm -rf node_modules package-lock.json
+          npm install
+          npm install @rollup/rollup-linux-x64-gnu --save-optional
           
       - name: Build application
         run: npm run build
