@@ -39,23 +39,35 @@ jobs:
 
       - name: Deploy to Azure Web App using ZIP
         run: |
-          # Ensure startup.sh has Unix line endings and is executable
-          dos2unix startup.sh || sed -i 's/\r$//' startup.sh || true
-          chmod +x startup.sh
+          # Ensure startup.sh has Unix line endings
+          sed -i 's/\r$//' startup.sh || true
           
           # Create deployment package
-          mkdir deploy-package
-          cp -r dist server startup.sh package.json deploy-package/
+          mkdir -p deploy-package
+          
+          # Copy files
+          cp -r dist deploy-package/
+          cp -r server deploy-package/
+          cp package.json deploy-package/
+          cp startup.sh deploy-package/
+          cp .deployment deploy-package/
+          
+          # List contents to verify
+          echo "=== Deployment package contents ==="
+          ls -la deploy-package/
+          echo "=== startup.sh present: ==="
+          ls -la deploy-package/startup.sh
+          
+          # Create zip
           cd deploy-package
-          
-          # Make startup.sh executable in the package
-          chmod +x startup.sh
-          
           zip -r ../deploy.zip .
           cd ..
           
+          echo "=== Deploying to Azure ==="
           # Deploy using Kudu REST API with correct hostname
           curl -X POST \
             -H "Content-Type: application/zip" \
             --data-binary @deploy.zip \
             "https://${{ secrets.AZURE_WEBAPP_USERNAME }}:${{ secrets.AZURE_WEBAPP_PASSWORD }}@safe-8-epdybjcfewg2cdcs.scm.westeurope-01.azurewebsites.net/api/zipdeploy"
+          
+          echo "=== Deployment completed ==="
